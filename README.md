@@ -245,6 +245,7 @@ All tests use mocking, so they run without requiring API credentials and don't c
 ├── test_all_functionality.py  # Comprehensive test suite (73 tests)
 ├── requirements.txt           # Python dependencies
 ├── .gitignore                 # Git ignore rules
+├── LICENSE                    # MIT License
 └── README.md                  # This file
 ```
 
@@ -399,7 +400,9 @@ python test_all_functionality.py
 
 ## License
 
-This project is provided as-is for personal use. Make sure to comply with:
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+Make sure to comply with:
 - [YouTube API Terms of Service](https://developers.google.com/youtube/terms/api-services-terms-of-service)
 - [Spotify Developer Terms](https://developer.spotify.com/terms)
 
