@@ -68,7 +68,7 @@ pip install -r requirements.txt
 4. Fill in app details:
    - App name: "YouTube to Spotify Transfer" (or any name)
    - App description: "Transfer playlists from YouTube"
-   - Redirect URI: `http://localhost:8080`
+   - Redirect URI: `http://127.0.0.1:8080/callback` (or you can use custom redirect URI)
 5. Click "Create"
 6. You'll see your **Client ID** and **Client Secret** on the app page
 
@@ -83,7 +83,7 @@ YOUTUBE_API_KEY = 'your_actual_youtube_api_key_here'
 # Spotify API Configuration
 SPOTIFY_CLIENT_ID = 'your_actual_spotify_client_id_here'
 SPOTIFY_CLIENT_SECRET = 'your_actual_spotify_client_secret_here'
-SPOTIFY_REDIRECT_URI = 'http://localhost:8080'
+SPOTIFY_REDIRECT_URI = 'redirect_uri_specified_when_creating_spotify_api_key'
 ```
 
 **Important**: Keep `config.py` private and never commit it to version control!
@@ -236,15 +236,15 @@ All tests use mocking, so they run without requiring API credentials and don't c
 
 ```
 .
-├── config.py                  # API credentials configuration
+├── config.py                  # API credentials configuration template
 ├── transfer.py                # Main CLI script
 ├── app.py                     # Web UI application (Gradio)
 ├── youtube_handler.py         # YouTube API wrapper
 ├── spotify_handler.py         # Spotify API wrapper
 ├── utils.py                   # Helper functions
-├── examples.py                # Usage examples
-├── test_all_functionality.py  # Comprehensive test suite
+├── test_all_functionality.py  # Comprehensive test suite (73 tests)
 ├── requirements.txt           # Python dependencies
+├── .gitignore                 # Git ignore rules
 └── README.md                  # This file
 ```
 
@@ -312,14 +312,12 @@ pip install --upgrade gradio
 
 ## Privacy & Security
 
-- **Never share** your `config.py` file
-- **Never commit** API keys to version control
-- Add to `.gitignore`:
-  ```
-  config.py
-  .spotify_cache
-  *.log
-  ```
+- **Never share** your API credentials
+- **Never commit** filled `config.py` to version control
+- The repository includes a `.gitignore` file that protects:
+  - `config_personal.py` - Your personal credentials file
+  - `.spotify_cache` - Spotify authentication cache
+  - `*.log` - Transfer log files
 - All processing happens locally on your machine
 - Your API credentials never leave your computer
 - Spotify OAuth is handled securely via official libraries
@@ -371,16 +369,6 @@ app.launch(
 ```
 
 This creates a temporary public URL that you can share with others.
-
-## Examples
-
-See `examples.py` for various usage patterns including:
-- Basic transfer
-- Strict matching (high confidence only)
-- Batch transfer
-- Custom processing with filtering
-- Error handling
-- Getting transfer statistics
 
 ## Contributing
 
