@@ -14,7 +14,7 @@ SPOTIFY_CLIENT_SECRET = 'your_actual_spotify_client_secret_here'
 SPOTIFY_REDIRECT_URI = 'redirect_uri_specified_when_creating_spotify_api_key'
 
 # Spotify API Scopes
-SPOTIFY_SCOPE = 'playlist-modify-public playlist-modify-private'
+SPOTIFY_SCOPE = 'playlist-modify-public playlist-modify-private ugc-image-upload'
 
 # Optional: Set to True to make playlists public by default
 CREATE_PUBLIC_PLAYLISTS = False

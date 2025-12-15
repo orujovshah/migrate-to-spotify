@@ -11,7 +11,10 @@ Automatically transfer your YouTube playlists to Spotify with intelligent track 
 
 ## Features
 
-- ✅ **Web UI Interface** - Beautiful browser-based interface with real-time progress
+- ✅ **Web UI Interface** - Beautiful browser-based interface with 4-step workflow
+- ✅ **Track Preview & Selection** - Review and remove tracks before creating playlist
+- ✅ **Custom Cover Images** - Upload your own playlist cover art
+- ✅ **Custom Descriptions** - Write personalized playlist descriptions
 - ✅ **CLI Interface** - Interactive command-line tool
 - ✅ Batch transfer entire YouTube playlists to Spotify
 - ✅ Intelligent title parsing and matching
@@ -21,7 +24,7 @@ Automatically transfer your YouTube playlists to Spotify with intelligent track 
 - ✅ Handles deleted/private videos gracefully
 - ✅ Rate limit handling
 - ✅ OAuth authentication for Spotify
-- ✅ **Comprehensive test suite** - 73 tests covering all functionality
+- ✅ **Comprehensive test suite** - 77 tests covering all functionality
 - ✅ **Python 3.13 compatible**
 
 ## Prerequisites
@@ -98,15 +101,24 @@ Launch the beautiful web interface:
 python app.py
 ```
 
-The app will automatically open in your browser at `http://localhost:7860`
+The app will automatically open in your default browser at `http://localhost:7860`
+
+**Workflow:**
+1. **Step 1**: Enter YouTube playlist URL → Click "Fetch Tracks"
+2. **Step 2**: Review matched tracks in the interactive table → Uncheck any you don't want
+3. **Step 3**: (Optional) Upload cover image, customize name and description
+4. **Step 4**: Click "Create Spotify Playlist"
 
 **Features:**
-- Real-time progress tracking
-- Statistics dashboard showing match quality
-- Visual track list with confidence indicators
-- Direct links to created Spotify playlists
-- Error handling and validation
-- User-friendly input forms
+- **Two-step workflow**: Fetch tracks first, then review before creating playlist
+- **Track preview & selection**: Review all matched tracks and uncheck any you don't want
+- **Custom cover images**: Upload your own playlist cover (JPEG/PNG, max 256KB)
+- **Custom descriptions**: Write a personalized description for your playlist
+- **Real-time progress tracking**: See progress for both fetching and creating steps
+- **Statistics dashboard**: View match quality and confidence levels
+- **Visual track table**: Interactive table with confidence indicators
+- **Direct Spotify links**: Click to open your created playlist
+- **Error handling and validation**: Clear error messages and input validation
 
 ### Command Line Interface
 
@@ -207,13 +219,15 @@ The script uses multiple strategies to find the best match:
 
 ### Log Files
 
-Each transfer creates a timestamped log file:
-- Format: `transfer_YYYYMMDD_HHMMSS.log`
+Each transfer creates a single timestamped log file in the `logs/` directory:
+- Location: `logs/transfer_YYYYMMDD_HHMMSS.log`
 - Contains detailed information about each track match
+- One log file per operation (whether using Web UI or CLI)
+- The logs directory is automatically created when the app runs
 
 ## Testing
 
-The project includes a comprehensive test suite with 73 tests covering all functionality.
+The project includes a comprehensive test suite with 77 tests covering all functionality.
 
 ### Run All Tests
 
@@ -225,10 +239,10 @@ python test_all_functionality.py
 
 - **28 tests** - Utility functions (title parsing, cleaning, matching)
 - **7 tests** - YouTube API handler
-- **12 tests** - Spotify API handler
+- **14 tests** - Spotify API handler (including cover image upload)
 - **6 tests** - Playlist transfer logic
 - **7 tests** - Edge cases
-- **13 tests** - Web UI functionality
+- **15 tests** - Web UI and CLI functionality (two-step workflow, track selection, cover images, logs directory creation)
 
 All tests use mocking, so they run without requiring API credentials and don't consume API quotas.
 
@@ -242,7 +256,7 @@ All tests use mocking, so they run without requiring API credentials and don't c
 ├── youtube_handler.py         # YouTube API wrapper
 ├── spotify_handler.py         # Spotify API wrapper
 ├── utils.py                   # Helper functions
-├── test_all_functionality.py  # Comprehensive test suite (73 tests)
+├── test_all_functionality.py  # Comprehensive test suite (77 tests)
 ├── requirements.txt           # Python dependencies
 ├── .gitignore                 # Git ignore rules
 ├── LICENSE                    # MIT License
@@ -299,9 +313,10 @@ If many tracks aren't found:
 
 ### Web UI Not Opening
 
-If the browser doesn't open automatically:
+The app automatically opens in your default browser when launched. If it doesn't open:
 1. Look for the URL in the console output (usually `http://localhost:7860`)
 2. Manually copy and paste it into your browser
+3. Check if a browser window opened in the background
 
 ### Python 3.13 Import Errors
 
@@ -318,7 +333,7 @@ pip install --upgrade gradio
 - The repository includes a `.gitignore` file that protects:
   - `config_personal.py` - Your personal credentials file
   - `.spotify_cache` - Spotify authentication cache
-  - `*.log` - Transfer log files
+  - `logs/` - Transfer log files directory
 - All processing happens locally on your machine
 - Your API credentials never leave your computer
 - Spotify OAuth is handled securely via official libraries

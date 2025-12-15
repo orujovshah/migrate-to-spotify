@@ -175,22 +175,49 @@ class SpotifyHandler:
     def playlist_exists(self, name: str) -> Optional[str]:
         """
         Check if a playlist with given name exists for current user.
-        
+
         Args:
             name: Playlist name to search for
-            
+
         Returns:
             Playlist ID if exists, None otherwise
         """
         try:
             user_id = self.sp.current_user()['id']
             playlists = self.sp.user_playlists(user_id)
-            
+
             for playlist in playlists['items']:
                 if playlist['name'].lower() == name.lower():
                     return playlist['id']
-            
+
             return None
         except Exception as e:
             logger.error(f"Error checking playlist existence: {e}")
             return None
+
+    def upload_playlist_cover(self, playlist_id: str, image_path: str) -> bool:
+        """
+        Upload cover image to a Spotify playlist.
+
+        Args:
+            playlist_id: Spotify playlist ID
+            image_path: Path to image file (JPEG format, max 256KB)
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            import base64
+
+            # Read and encode image
+            with open(image_path, 'rb') as image_file:
+                image_data = base64.b64encode(image_file.read()).decode('utf-8')
+
+            # Upload to Spotify
+            self.sp.playlist_upload_cover_image(playlist_id, image_data)
+            logger.info(f"Successfully uploaded cover image for playlist {playlist_id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error uploading playlist cover: {e}")
+            return False

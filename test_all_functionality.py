@@ -4,9 +4,10 @@ Tests every single functionality in the codebase with extensive coverage
 """
 
 import unittest
-from unittest.mock import Mock, patch, MagicMock, call
+from unittest.mock import Mock, patch, MagicMock, call, mock_open
 import sys
 import re
+import os
 from typing import Dict, List
 
 # Import modules to test
@@ -687,6 +688,43 @@ class TestSpotifyHandler(unittest.TestCase):
 
         self.assertIsNone(playlist_id)
 
+    @patch('spotify_handler.spotipy.Spotify')
+    @patch('spotify_handler.SpotifyOAuth')
+    @patch('builtins.open', create=True)
+    def test_upload_playlist_cover_success(self, mock_open, mock_oauth, mock_spotify):
+        """Test successful playlist cover upload"""
+        from spotify_handler import SpotifyHandler
+        import base64
+
+        mock_spotify_instance = MagicMock()
+        mock_spotify.return_value = mock_spotify_instance
+
+        # Mock file reading
+        mock_file = MagicMock()
+        mock_file.read.return_value = b'fake_image_data'
+        mock_open.return_value.__enter__.return_value = mock_file
+
+        handler = SpotifyHandler("id", "secret", "uri", "scope")
+        success = handler.upload_playlist_cover('playlist123', '/path/to/image.jpg')
+
+        self.assertTrue(success)
+        mock_spotify_instance.playlist_upload_cover_image.assert_called_once()
+
+    @patch('spotify_handler.spotipy.Spotify')
+    @patch('spotify_handler.SpotifyOAuth')
+    @patch('builtins.open', side_effect=FileNotFoundError())
+    def test_upload_playlist_cover_file_not_found(self, mock_open, mock_oauth, mock_spotify):
+        """Test playlist cover upload with non-existent file"""
+        from spotify_handler import SpotifyHandler
+
+        mock_spotify_instance = MagicMock()
+        mock_spotify.return_value = mock_spotify_instance
+
+        handler = SpotifyHandler("id", "secret", "uri", "scope")
+        success = handler.upload_playlist_cover('playlist123', '/path/to/nonexistent.jpg')
+
+        self.assertFalse(success)
+
 
 class TestPlaylistTransfer(unittest.TestCase):
     """Test PlaylistTransfer class from transfer.py"""
@@ -939,143 +977,14 @@ class TestEdgeCases(unittest.TestCase):
 
 
 class TestGradioApp(unittest.TestCase):
-    """Test Gradio app functionality from app.py"""
-
-    def test_format_statistics_with_matches(self):
-        """Test statistics formatting with various match types"""
-        from app import format_statistics
-
-        matches = [
-            ({'title': 'Video 1'}, {'id': 'track1'}, 'matched'),
-            ({'title': 'Video 2'}, {'id': 'track2'}, 'matched'),
-            ({'title': 'Video 3'}, {'id': 'track3'}, 'low_confidence'),
-            ({'title': 'Video 4'}, None, 'not_found')
-        ]
-
-        result = format_statistics(matches)
-
-        self.assertIn('Total Videos Processed:', result)
-        self.assertIn('4', result)
-        self.assertIn('High Confidence Matches:', result)
-        self.assertIn('2', result)
-        self.assertIn('Low Confidence Matches:', result)
-        self.assertIn('1', result)
-        self.assertIn('Not Found:', result)
-        self.assertIn('1', result)
-        self.assertIn('Success Rate:', result)
-
-    def test_format_statistics_empty(self):
-        """Test statistics formatting with no matches"""
-        from app import format_statistics
-
-        result = format_statistics([])
-        self.assertIn('No videos processed', result)
-
-    def test_format_statistics_all_matched(self):
-        """Test statistics with 100% success rate"""
-        from app import format_statistics
-
-        matches = [
-            ({'title': 'Video 1'}, {'id': 'track1'}, 'matched'),
-            ({'title': 'Video 2'}, {'id': 'track2'}, 'matched')
-        ]
-
-        result = format_statistics(matches)
-        self.assertIn('100', result)
-
-    def test_format_track_list_with_all_types(self):
-        """Test track list formatting with all match types"""
-        from app import format_track_list
-
-        matches = [
-            (
-                {'title': 'Video 1'},
-                {'id': 'track1', 'name': 'Song 1', 'artists': [{'name': 'Artist 1'}]},
-                'matched'
-            ),
-            (
-                {'title': 'Video 2'},
-                {'id': 'track2', 'name': 'Song 2', 'artists': [{'name': 'Artist 2'}]},
-                'low_confidence'
-            ),
-            (
-                {'title': 'Video 3'},
-                None,
-                'not_found'
-            )
-        ]
-
-        result = format_track_list(matches, include_low_confidence=True)
-
-        self.assertIn('Video 1', result)
-        self.assertIn('Song 1', result)
-        self.assertIn('Artist 1', result)
-        self.assertIn('✓', result)
-        self.assertIn('Video 2', result)
-        self.assertIn('?', result)
-        self.assertIn('Low Confidence', result)
-        self.assertIn('Video 3', result)
-        self.assertIn('✗', result)
-        self.assertIn('Not found on Spotify', result)
-
-    def test_format_track_list_high_confidence_only(self):
-        """Test track list with only high confidence matches shown"""
-        from app import format_track_list
-
-        matches = [
-            (
-                {'title': 'Video 1'},
-                {'id': 'track1', 'name': 'Song 1', 'artists': [{'name': 'Artist 1'}]},
-                'matched'
-            ),
-            (
-                {'title': 'Video 2'},
-                {'id': 'track2', 'name': 'Song 2', 'artists': [{'name': 'Artist 2'}]},
-                'low_confidence'
-            )
-        ]
-
-        result = format_track_list(matches, include_low_confidence=False)
-
-        self.assertIn('Video 1', result)
-        # Low confidence should not appear when include_low_confidence=False
-        # but the function still shows all matches, just marks them differently
-
-    def test_format_track_list_empty(self):
-        """Test track list formatting with no tracks"""
-        from app import format_track_list
-
-        result = format_track_list([], include_low_confidence=True)
-        self.assertIn('No tracks to display', result)
-
-    def test_format_track_list_multiple_artists(self):
-        """Test track list with multiple artists"""
-        from app import format_track_list
-
-        matches = [
-            (
-                {'title': 'Video 1'},
-                {
-                    'id': 'track1',
-                    'name': 'Song 1',
-                    'artists': [{'name': 'Artist 1'}, {'name': 'Artist 2'}]
-                },
-                'matched'
-            )
-        ]
-
-        result = format_track_list(matches, include_low_confidence=True)
-
-        self.assertIn('Artist 1', result)
-        self.assertIn('Artist 2', result)
-        self.assertIn('Song 1', result)
+    """Test Gradio app (app.py) and CLI (transfer.py) functionality"""
 
     @patch('app.PlaylistTransfer')
-    def test_transfer_playlist_empty_url(self, mock_transfer_class):
-        """Test transfer with empty YouTube URL"""
-        from app import transfer_playlist
+    def test_fetch_tracks_empty_url(self, mock_transfer_class):
+        """Test fetch_tracks with empty YouTube URL"""
+        from app import fetch_tracks
 
-        result = transfer_playlist("", "Test Playlist", True)
+        result = fetch_tracks("", True)
 
         self.assertIsInstance(result, tuple)
         self.assertEqual(len(result), 4)
@@ -1083,22 +992,22 @@ class TestGradioApp(unittest.TestCase):
         self.assertIn('YouTube playlist URL', result[0])
 
     @patch('app.PlaylistTransfer')
-    def test_transfer_playlist_initialization_error(self, mock_transfer_class):
-        """Test transfer when initialization fails"""
-        from app import transfer_playlist
+    def test_fetch_tracks_initialization_error(self, mock_transfer_class):
+        """Test fetch_tracks when initialization fails"""
+        from app import fetch_tracks
 
         mock_transfer_class.side_effect = Exception("API credentials invalid")
 
-        result = transfer_playlist("PLtest", "Test Playlist", True)
+        result = fetch_tracks("PLtest", True)
 
         self.assertIsInstance(result, tuple)
         self.assertIn('Error', result[0])
         self.assertIn('API credentials', result[0])
 
     @patch('app.PlaylistTransfer')
-    def test_transfer_playlist_success(self, mock_transfer_class):
-        """Test successful playlist transfer"""
-        from app import transfer_playlist
+    def test_fetch_tracks_success(self, mock_transfer_class):
+        """Test successful track fetching"""
+        from app import fetch_tracks
 
         # Mock the transfer instance
         mock_transfer = MagicMock()
@@ -1111,7 +1020,8 @@ class TestGradioApp(unittest.TestCase):
         }
 
         mock_videos = [
-            {'title': 'Video 1', 'video_id': 'vid1'}
+            {'title': 'Video 1', 'video_id': 'vid1'},
+            {'title': 'Video 2', 'video_id': 'vid2'}
         ]
 
         mock_matches = [
@@ -1119,26 +1029,49 @@ class TestGradioApp(unittest.TestCase):
                 {'title': 'Video 1'},
                 {'id': 'track1', 'name': 'Song 1', 'artists': [{'name': 'Artist 1'}]},
                 'matched'
+            ),
+            (
+                {'title': 'Video 2'},
+                {'id': 'track2', 'name': 'Song 2', 'artists': [{'name': 'Artist 2'}]},
+                'low_confidence'
             )
         ]
 
         mock_transfer.fetch_youtube_playlist.return_value = (mock_playlist_info, mock_videos)
         mock_transfer.match_tracks.return_value = mock_matches
-        mock_transfer.create_spotify_playlist.return_value = 'playlist123'
-        mock_transfer.spotify.get_playlist_url.return_value = 'https://open.spotify.com/playlist/playlist123'
 
-        result = transfer_playlist("PLtest", "Test Playlist", True)
+        status_msg, tracks_data, state_data, stats = fetch_tracks("PLtest", True)
 
-        self.assertIsInstance(result, tuple)
-        self.assertEqual(len(result), 4)
-        self.assertIn('Complete', result[0])
-        self.assertIn('Test Playlist', result[0])
-        self.assertIn('https://open.spotify.com/playlist/playlist123', result[3])
+        # Check return types
+        self.assertIsInstance(status_msg, str)
+        self.assertIsInstance(tracks_data, list)
+        self.assertIsInstance(state_data, dict)
+        self.assertIsInstance(stats, str)
+
+        # Check status message
+        self.assertIn('Fetched Successfully', status_msg)
+        self.assertIn('Test Playlist', status_msg)
+
+        # Check tracks data (should have 2 tracks)
+        self.assertEqual(len(tracks_data), 2)
+        self.assertTrue(tracks_data[0][0])  # First column is checkbox, should be True
+        self.assertIn('Video 1', tracks_data[0][1])
+        self.assertIn('Song 1', tracks_data[0][2])
+        self.assertIn('High', tracks_data[0][3])
+
+        # Check state data
+        self.assertIn('playlist_info', state_data)
+        self.assertIn('matches', state_data)
+        self.assertEqual(len(state_data['matches']), 2)
+
+        # Check statistics
+        self.assertIn('Total Videos:', stats)
+        self.assertIn('High Confidence Matches:', stats)
 
     @patch('app.PlaylistTransfer')
-    def test_transfer_playlist_no_videos(self, mock_transfer_class):
-        """Test transfer when no videos found"""
-        from app import transfer_playlist
+    def test_fetch_tracks_no_videos(self, mock_transfer_class):
+        """Test fetch_tracks when no videos found"""
+        from app import fetch_tracks
 
         mock_transfer = MagicMock()
         mock_transfer_class.return_value = mock_transfer
@@ -1151,42 +1084,250 @@ class TestGradioApp(unittest.TestCase):
 
         mock_transfer.fetch_youtube_playlist.return_value = (mock_playlist_info, [])
 
-        result = transfer_playlist("PLtest", "", True)
+        status_msg, tracks_data, state_data, stats = fetch_tracks("PLtest", True)
 
-        self.assertIsInstance(result, tuple)
-        self.assertIn('Error', result[0])
-        self.assertIn('No videos found', result[0])
+        self.assertIn('Error', status_msg)
+        self.assertIn('No videos found', status_msg)
 
     @patch('app.PlaylistTransfer')
-    def test_transfer_playlist_uses_youtube_name(self, mock_transfer_class):
-        """Test that YouTube name is used when Spotify name is empty"""
-        from app import transfer_playlist
+    def test_fetch_tracks_exclude_low_confidence(self, mock_transfer_class):
+        """Test fetch_tracks with low confidence excluded"""
+        from app import fetch_tracks
 
         mock_transfer = MagicMock()
         mock_transfer_class.return_value = mock_transfer
 
         mock_playlist_info = {
             'id': 'PLtest',
-            'title': 'YouTube Playlist Name',
+            'title': 'Test Playlist',
             'channel': 'Test Channel'
         }
 
-        mock_videos = [{'title': 'Video 1', 'video_id': 'vid1'}]
-        mock_matches = [({'title': 'Video 1'}, {'id': 'track1', 'name': 'Song', 'artists': [{'name': 'Artist'}]}, 'matched')]
+        mock_videos = [
+            {'title': 'Video 1', 'video_id': 'vid1'},
+            {'title': 'Video 2', 'video_id': 'vid2'}
+        ]
+
+        mock_matches = [
+            ({'title': 'Video 1'}, {'id': 'track1', 'name': 'Song 1', 'artists': [{'name': 'Artist 1'}]}, 'matched'),
+            ({'title': 'Video 2'}, {'id': 'track2', 'name': 'Song 2', 'artists': [{'name': 'Artist 2'}]}, 'low_confidence')
+        ]
 
         mock_transfer.fetch_youtube_playlist.return_value = (mock_playlist_info, mock_videos)
         mock_transfer.match_tracks.return_value = mock_matches
-        mock_transfer.create_spotify_playlist.return_value = 'playlist123'
+
+        status_msg, tracks_data, state_data, stats = fetch_tracks("PLtest", False)
+
+        # Should only have 1 track (high confidence)
+        self.assertEqual(len(tracks_data), 1)
+        self.assertIn('Song 1', tracks_data[0][2])
+
+    @patch('app.PlaylistTransfer')
+    def test_create_playlist_no_state(self, mock_transfer_class):
+        """Test create_playlist without fetching tracks first"""
+        from app import create_playlist
+
+        result = create_playlist("Test Playlist", "Description", None, [], {})
+
+        self.assertIsInstance(result, tuple)
+        self.assertEqual(len(result), 2)
+        self.assertIn('Error', result[0])
+        self.assertIn('fetch tracks first', result[0])
+
+    @patch('app.PlaylistTransfer')
+    def test_create_playlist_no_tracks_selected(self, mock_transfer_class):
+        """Test create_playlist with no tracks selected"""
+        from app import create_playlist
+
+        mock_transfer = MagicMock()
+        mock_transfer_class.return_value = mock_transfer
+
+        state_dict = {
+            'playlist_info': {'title': 'Test', 'channel': 'Test Channel'},
+            'matches': [
+                {'video': {'title': 'Video 1'}, 'track': {'id': 'track1'}, 'status': 'matched'}
+            ]
+        }
+
+        # All tracks unchecked
+        tracks_dataframe = [[False, 'Video 1', 'Song 1', 'High']]
+
+        status_msg, playlist_url = create_playlist("Test", "Desc", None, tracks_dataframe, state_dict)
+
+        self.assertIn('Error', status_msg)
+        self.assertIn('No tracks selected', status_msg)
+
+    @patch('app.PlaylistTransfer')
+    def test_create_playlist_success(self, mock_transfer_class):
+        """Test successful playlist creation"""
+        from app import create_playlist
+
+        mock_transfer = MagicMock()
+        mock_transfer_class.return_value = mock_transfer
+
+        mock_transfer.spotify.create_playlist.return_value = 'playlist123'
+        mock_transfer.spotify.add_tracks_to_playlist.return_value = True
         mock_transfer.spotify.get_playlist_url.return_value = 'https://open.spotify.com/playlist/playlist123'
 
-        result = transfer_playlist("PLtest", "", True)
+        state_dict = {
+            'playlist_info': {'title': 'YouTube Playlist', 'channel': 'Test Channel'},
+            'matches': [
+                {'video': {'title': 'Video 1'}, 'track': {'id': 'track1', 'name': 'Song 1'}, 'status': 'matched'},
+                {'video': {'title': 'Video 2'}, 'track': {'id': 'track2', 'name': 'Song 2'}, 'status': 'matched'}
+            ]
+        }
 
-        # Verify that create_spotify_playlist was called with YouTube name + suffix
-        call_args = mock_transfer.create_spotify_playlist.call_args
-        self.assertIn('YouTube Playlist Name', call_args[1]['playlist_name'])
-        self.assertIn('from YouTube', call_args[1]['playlist_name'])
+        # Two tracks selected
+        tracks_dataframe = [
+            [True, 'Video 1', 'Song 1', 'High'],
+            [True, 'Video 2', 'Song 2', 'High']
+        ]
 
-    def test_create_ui_returns_blocks(self):
+        status_msg, playlist_url = create_playlist("My Playlist", "My Description", None, tracks_dataframe, state_dict)
+
+        self.assertIn('Created Successfully', status_msg)
+        self.assertIn('My Playlist', status_msg)
+        self.assertIn('2', status_msg)  # 2 tracks added
+        self.assertEqual(playlist_url, 'https://open.spotify.com/playlist/playlist123')
+
+        # Verify create_playlist was called with correct params
+        mock_transfer.spotify.create_playlist.assert_called_once()
+        call_args = mock_transfer.spotify.create_playlist.call_args
+        self.assertEqual(call_args[1]['name'], 'My Playlist')
+        self.assertEqual(call_args[1]['description'], 'My Description')
+
+    @patch('app.PlaylistTransfer')
+    def test_create_playlist_uses_youtube_name(self, mock_transfer_class):
+        """Test that YouTube name is used when Spotify name is empty"""
+        from app import create_playlist
+
+        mock_transfer = MagicMock()
+        mock_transfer_class.return_value = mock_transfer
+
+        mock_transfer.spotify.create_playlist.return_value = 'playlist123'
+        mock_transfer.spotify.add_tracks_to_playlist.return_value = True
+        mock_transfer.spotify.get_playlist_url.return_value = 'https://open.spotify.com/playlist/playlist123'
+
+        state_dict = {
+            'playlist_info': {'title': 'YouTube Playlist Name', 'channel': 'Test Channel'},
+            'matches': [
+                {'video': {'title': 'Video 1'}, 'track': {'id': 'track1'}, 'status': 'matched'}
+            ]
+        }
+
+        tracks_dataframe = [[True, 'Video 1', 'Song 1', 'High']]
+
+        status_msg, playlist_url = create_playlist("", "", None, tracks_dataframe, state_dict)
+
+        # Check that YouTube name was used
+        call_args = mock_transfer.spotify.create_playlist.call_args
+        self.assertIn('YouTube Playlist Name', call_args[1]['name'])
+        self.assertIn('from YouTube', call_args[1]['name'])
+
+    @patch('app.PlaylistTransfer')
+    def test_create_playlist_partial_selection(self, mock_transfer_class):
+        """Test creating playlist with only some tracks selected"""
+        from app import create_playlist
+
+        mock_transfer = MagicMock()
+        mock_transfer_class.return_value = mock_transfer
+
+        mock_transfer.spotify.create_playlist.return_value = 'playlist123'
+        mock_transfer.spotify.add_tracks_to_playlist.return_value = True
+        mock_transfer.spotify.get_playlist_url.return_value = 'https://open.spotify.com/playlist/playlist123'
+
+        state_dict = {
+            'playlist_info': {'title': 'Test', 'channel': 'Test Channel'},
+            'matches': [
+                {'video': {'title': 'Video 1'}, 'track': {'id': 'track1'}, 'status': 'matched'},
+                {'video': {'title': 'Video 2'}, 'track': {'id': 'track2'}, 'status': 'matched'},
+                {'video': {'title': 'Video 3'}, 'track': {'id': 'track3'}, 'status': 'matched'}
+            ]
+        }
+
+        # Only first and third track selected
+        tracks_dataframe = [
+            [True, 'Video 1', 'Song 1', 'High'],
+            [False, 'Video 2', 'Song 2', 'High'],
+            [True, 'Video 3', 'Song 3', 'High']
+        ]
+
+        status_msg, playlist_url = create_playlist("Test", "Desc", None, tracks_dataframe, state_dict)
+
+        # Should add 2 tracks
+        self.assertIn('2', status_msg)
+
+        # Verify only selected tracks were added
+        call_args = mock_transfer.spotify.add_tracks_to_playlist.call_args
+        added_tracks = call_args[0][1]
+        self.assertEqual(len(added_tracks), 2)
+        self.assertEqual(added_tracks[0], 'track1')
+        self.assertEqual(added_tracks[1], 'track3')
+
+    @patch('app.PlaylistTransfer')
+    @patch('builtins.open', create=True)
+    def test_create_playlist_with_cover_image(self, mock_open, mock_transfer_class):
+        """Test creating playlist with cover image upload"""
+        from app import create_playlist
+
+        mock_transfer = MagicMock()
+        mock_transfer_class.return_value = mock_transfer
+
+        mock_transfer.spotify.create_playlist.return_value = 'playlist123'
+        mock_transfer.spotify.add_tracks_to_playlist.return_value = True
+        mock_transfer.spotify.upload_playlist_cover.return_value = True
+        mock_transfer.spotify.get_playlist_url.return_value = 'https://open.spotify.com/playlist/playlist123'
+
+        state_dict = {
+            'playlist_info': {'title': 'Test', 'channel': 'Test Channel'},
+            'matches': [
+                {'video': {'title': 'Video 1'}, 'track': {'id': 'track1'}, 'status': 'matched'}
+            ]
+        }
+
+        tracks_dataframe = [[True, 'Video 1', 'Song 1', 'High']]
+
+        # Mock file for cover image
+        mock_file = MagicMock()
+        mock_file.read.return_value = b'fake_image_data'
+        mock_open.return_value.__enter__.return_value = mock_file
+
+        status_msg, playlist_url = create_playlist("Test", "Desc", "/path/to/cover.jpg", tracks_dataframe, state_dict)
+
+        # Verify cover was uploaded
+        mock_transfer.spotify.upload_playlist_cover.assert_called_once_with('playlist123', '/path/to/cover.jpg')
+        self.assertIn('Created Successfully', status_msg)
+
+    @patch('app.PlaylistTransfer')
+    def test_create_playlist_cover_upload_fails(self, mock_transfer_class):
+        """Test that playlist creation continues even if cover upload fails"""
+        from app import create_playlist
+
+        mock_transfer = MagicMock()
+        mock_transfer_class.return_value = mock_transfer
+
+        mock_transfer.spotify.create_playlist.return_value = 'playlist123'
+        mock_transfer.spotify.add_tracks_to_playlist.return_value = True
+        mock_transfer.spotify.upload_playlist_cover.side_effect = Exception("Upload failed")
+        mock_transfer.spotify.get_playlist_url.return_value = 'https://open.spotify.com/playlist/playlist123'
+
+        state_dict = {
+            'playlist_info': {'title': 'Test', 'channel': 'Test Channel'},
+            'matches': [
+                {'video': {'title': 'Video 1'}, 'track': {'id': 'track1'}, 'status': 'matched'}
+            ]
+        }
+
+        tracks_dataframe = [[True, 'Video 1', 'Song 1', 'High']]
+
+        # Should succeed even if cover upload fails
+        status_msg, playlist_url = create_playlist("Test", "Desc", "/path/to/cover.jpg", tracks_dataframe, state_dict)
+
+        self.assertIn('Created Successfully', status_msg)
+        self.assertEqual(playlist_url, 'https://open.spotify.com/playlist/playlist123')
+
+    @patch('os.makedirs')
+    def test_create_ui_returns_blocks(self, mock_makedirs):
         """Test that create_ui returns a Gradio Blocks object"""
         from app import create_ui
 
@@ -1196,6 +1337,39 @@ class TestGradioApp(unittest.TestCase):
         self.assertIsNotNone(app)
         # The object should have a launch method
         self.assertTrue(hasattr(app, 'launch'))
+
+    @patch('os.makedirs')
+    def test_logs_directory_created_app(self, mock_makedirs):
+        """Test that logs directory is created on app.py import"""
+        # Re-import app module to trigger directory creation
+        import importlib
+        import app as app_module
+        importlib.reload(app_module)
+
+        # Verify makedirs was called with 'logs' and exist_ok=True
+        mock_makedirs.assert_called_with('logs', exist_ok=True)
+
+    @patch('transfer.SpotifyHandler')
+    @patch('transfer.YouTubeHandler')
+    @patch('os.makedirs')
+    @patch('builtins.input', side_effect=['', '', ''])
+    def test_logs_directory_created_transfer_main(self, mock_input, mock_makedirs, mock_youtube, mock_spotify):
+        """Test that logs directory is created when transfer.py main() is called"""
+        from transfer import main
+
+        # Mock the handlers to prevent actual initialization
+        mock_yt_instance = MagicMock()
+        mock_sp_instance = MagicMock()
+        mock_youtube.return_value = mock_yt_instance
+        mock_spotify.return_value = mock_sp_instance
+
+        try:
+            main()
+        except:
+            pass  # main() will fail due to empty input, but we just want to check makedirs
+
+        # Verify makedirs was called with 'logs' and exist_ok=True
+        mock_makedirs.assert_called_with('logs', exist_ok=True)
 
 
 def run_tests():
@@ -1240,6 +1414,8 @@ if __name__ == '__main__':
     print("\n" + "="*70)
     print("COMPREHENSIVE TEST SUITE")
     print("YouTube to Spotify Playlist Transfer")
+    print("="*70)
+    print("Total Tests: 77")
     print("="*70 + "\n")
 
     result = run_tests()

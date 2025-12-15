@@ -4,6 +4,7 @@ Main script to transfer YouTube playlist to Spotify
 
 import logging
 import sys
+import os
 from typing import List, Dict, Tuple
 from datetime import datetime
 
@@ -18,15 +19,6 @@ from utils import (
 )
 import config
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(f'transfer_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log'),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
 logger = logging.getLogger(__name__)
 
 
@@ -260,6 +252,19 @@ class PlaylistTransfer:
 
 def main():
     """Main entry point"""
+    # Create logs directory if it doesn't exist
+    os.makedirs('logs', exist_ok=True)
+
+    # Configure logging for CLI usage
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(f'logs/transfer_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log'),
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
+
     print("\n" + "="*60)
     print("YouTube to Spotify Playlist Transfer")
     print("="*60 + "\n")

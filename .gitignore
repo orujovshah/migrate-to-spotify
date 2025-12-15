@@ -143,6 +143,7 @@ cython_debug/
 
 # ==================== LOGS & REPORTS ====================
 # Transfer logs
+logs/
 transfer_*.log
 *.log
 
