@@ -4,8 +4,191 @@ Includes title cleaning, parsing, and matching algorithms
 """
 
 import re
-from typing import Tuple, Optional
+from typing import Tuple, Optional, List
 from difflib import SequenceMatcher
+from sentence_transformers import SentenceTransformer, util
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class EmbeddingMatcher:
+    """
+    Singleton class for managing sentence transformer model.
+    Loads model once and reuses for all track matching.
+    """
+    _instance = None
+    _model = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    @property
+    def model(self) -> Optional[SentenceTransformer]:
+        """Lazy load the model on first access"""
+        if self._model is None:
+            try:
+                was_downloaded = self.is_model_downloaded()
+
+                if not was_downloaded:
+                    logger.info("Downloading sentence transformer model (all-mpnet-base-v2)...")
+                    logger.info("This is a one-time download (~420MB). Please wait...")
+                else:
+                    logger.info("Loading sentence transformer model (all-mpnet-base-v2)...")
+
+                self._model = SentenceTransformer('all-mpnet-base-v2')
+
+                if not was_downloaded:
+                    logger.info("✓ Model downloaded and loaded successfully")
+                else:
+                    logger.info("✓ Model loaded successfully")
+
+            except Exception as e:
+                logger.error(f"Failed to load embedding model: {e}")
+                logger.warning("Falling back to string similarity matching")
+                return None
+        return self._model
+
+    def encode(self, text: str, normalize: bool = True):
+        """Encode text to embedding vector"""
+        if self.model is None:
+            return None
+        try:
+            return self.model.encode(text, normalize_embeddings=normalize)
+        except Exception as e:
+            logger.error(f"Failed to encode text: {e}")
+            return None
+
+    def is_model_downloaded(self) -> bool:
+        """
+        Check if model is already downloaded to disk cache.
+
+        Returns:
+            True if model exists in cache, False otherwise
+        """
+        import os
+        from pathlib import Path
+
+        # Check Hugging Face cache (primary location for newer versions)
+        hf_cache = Path.home() / '.cache' / 'huggingface' / 'hub' / 'models--sentence-transformers--all-mpnet-base-v2'
+        if hf_cache.exists() and hf_cache.is_dir():
+            return True
+
+        # Check legacy torch cache location (fallback)
+        torch_cache = Path.home() / '.cache' / 'torch' / 'sentence_transformers' / 'sentence-transformers_all-mpnet-base-v2'
+        if torch_cache.exists() and torch_cache.is_dir():
+            return True
+
+        return False
+
+    def get_model_status(self) -> str:
+        """
+        Get human-readable model status.
+
+        Returns:
+            Status string describing model state
+        """
+        if self._model is not None:
+            return "Downloaded ✓ (Loaded in memory)"
+        elif self.is_model_downloaded():
+            return "Downloaded ✓ (Ready to load)"
+        else:
+            return "Not downloaded (will download on first use)"
+
+
+# Global instance
+_embedding_matcher = EmbeddingMatcher()
+
+
+def format_spotify_track_text(track: dict) -> str:
+    """
+    Format Spotify track for embedding.
+
+    Args:
+        track: Spotify track dictionary
+
+    Returns:
+        Formatted string: "Artist - Track Name"
+    """
+    artists = ' '.join([a['name'] for a in track['artists']])
+    return f"{artists} - {track['name']}"
+
+
+def match_by_embeddings(
+    youtube_title: str,
+    spotify_tracks: List[dict],
+    threshold: float = 0.6
+) -> Optional[Tuple[dict, float]]:
+    """
+    Match YouTube title to best Spotify track using sentence embeddings.
+
+    Flow:
+        1. Clean YouTube title with regex
+        2. Encode cleaned title to embedding
+        3. Encode all Spotify tracks to embeddings
+        4. Compute cosine similarity
+        5. Return best match above threshold
+
+    Args:
+        youtube_title: Original YouTube video title
+        spotify_tracks: List of Spotify track dictionaries
+        threshold: Minimum cosine similarity (0.0 to 1.0)
+
+    Returns:
+        Tuple of (best_track, similarity_score) or None if no match above threshold
+    """
+    if not spotify_tracks:
+        return None
+
+    # Step 1: Rule-based cleanup (regex)
+    yt_clean = clean_youtube_title(youtube_title)
+
+    # Step 2: Sentence embedding (YouTube)
+    yt_embedding = _embedding_matcher.encode(yt_clean)
+
+    if yt_embedding is None:
+        # Fallback to string similarity if model unavailable
+        logger.debug("Model unavailable, falling back to string similarity")
+        best_track = None
+        best_score = 0.0
+
+        for track in spotify_tracks:
+            sp_text = format_spotify_track_text(track)
+            score = similarity_score(yt_clean, sp_text)
+            if score > best_score:
+                best_score = score
+                best_track = track
+
+        if best_score >= threshold:
+            return (best_track, best_score)
+        return None
+
+    # Step 3: Sentence embeddings (Spotify tracks)
+    spotify_texts = [format_spotify_track_text(track) for track in spotify_tracks]
+    sp_embeddings = _embedding_matcher.model.encode(
+        spotify_texts,
+        normalize_embeddings=True
+    )
+
+    # Step 4: Cosine similarity
+    similarities = util.cos_sim(yt_embedding, sp_embeddings)[0]
+
+    # Step 5: Best match + threshold
+    best_idx = similarities.argmax().item()
+    best_score = similarities[best_idx].item()
+
+    if best_score >= threshold:
+        best_track = spotify_tracks[best_idx]
+        logger.debug(
+            f"Best match: {format_spotify_track_text(best_track)} "
+            f"(cosine similarity: {best_score:.3f})"
+        )
+        return (best_track, float(best_score))
+
+    logger.debug(f"No match above threshold {threshold} (best: {best_score:.3f})")
+    return None
 
 
 def clean_youtube_title(title: str) -> str:
@@ -128,37 +311,40 @@ def similarity_score(str1: str, str2: str) -> float:
 
 def verify_match(youtube_title: str, spotify_track: dict, threshold: float = 0.6) -> bool:
     """
-    Verify if Spotify track is a good match for YouTube video.
-    
+    Verify if Spotify track is a good match for YouTube video using embeddings.
+
+    Flow:
+        1. Clean YouTube title with regex
+        2. Encode to embeddings (YouTube + Spotify)
+        3. Compute cosine similarity
+        4. Return True if above threshold
+
     Args:
         youtube_title: Original YouTube video title
         spotify_track: Spotify track object
-        threshold: Minimum similarity score (0.0 to 1.0)
-        
+        threshold: Minimum cosine similarity (0.0 to 1.0)
+
     Returns:
         True if match is above threshold
     """
-    artist, title = parse_artist_title(youtube_title)
-    
-    # Get Spotify track details
-    spotify_name = spotify_track['name']
-    spotify_artists = ' '.join([a['name'] for a in spotify_track['artists']])
-    spotify_full = f"{spotify_artists} {spotify_name}"
-    
-    # Calculate similarity scores
-    cleaned_yt = clean_youtube_title(youtube_title)
-    
-    scores = [
-        similarity_score(cleaned_yt, spotify_full),
-        similarity_score(cleaned_yt, spotify_name),
-    ]
-    
-    # If we parsed artist and title, check those too
-    if artist and title:
-        scores.append(similarity_score(title, spotify_name))
-        scores.append(similarity_score(artist, spotify_artists))
-    
-    return max(scores) >= threshold
+    # Step 1: Rule-based cleanup (regex)
+    yt_clean = clean_youtube_title(youtube_title)
+
+    # Step 2 & 3: Sentence embeddings + Cosine similarity
+    sp_text = format_spotify_track_text(spotify_track)
+    yt_embedding = _embedding_matcher.encode(yt_clean)
+
+    if yt_embedding is None:
+        # Fallback to string similarity if model unavailable
+        return similarity_score(yt_clean, sp_text) >= threshold
+
+    sp_embedding = _embedding_matcher.encode(sp_text)
+    if sp_embedding is None:
+        return similarity_score(yt_clean, sp_text) >= threshold
+
+    # Step 4: Cosine similarity + threshold
+    similarity = util.cos_sim(yt_embedding, sp_embedding).item()
+    return float(similarity) >= threshold
 
 
 def format_track_info(track: dict) -> str:
