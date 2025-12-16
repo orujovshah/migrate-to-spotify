@@ -12,6 +12,7 @@ Automatically transfer your YouTube playlists to Spotify with intelligent track 
 ## Features
 
 - ✅ **Web UI Interface** - Beautiful browser-based interface with 4-step workflow
+- ✅ **Settings UI** - Configure API keys directly in the web interface with persistent storage
 - ✅ **Track Preview & Selection** - Review and remove tracks before creating playlist
 - ✅ **Custom Cover Images** - Upload your own playlist cover art
 - ✅ **Custom Descriptions** - Write personalized playlist descriptions
@@ -24,7 +25,7 @@ Automatically transfer your YouTube playlists to Spotify with intelligent track 
 - ✅ Handles deleted/private videos gracefully
 - ✅ Rate limit handling
 - ✅ OAuth authentication for Spotify
-- ✅ **Comprehensive test suite** - 77 tests covering all functionality
+- ✅ **Comprehensive test suite** - 89 tests covering all functionality
 - ✅ **Python 3.13 compatible**
 
 ## Prerequisites
@@ -77,19 +78,21 @@ pip install -r requirements.txt
 
 ### 5. Configure API Keys
 
-Edit `config.py` and add your credentials:
+You'll configure your API keys through the web interface on first launch. The settings are saved to `.app_settings.json` and persist across sessions.
 
-```python
-# YouTube Data API v3 Configuration
-YOUTUBE_API_KEY = 'your_actual_youtube_api_key_here'
+**For Web UI:**
+1. Launch the app: `python app.py`
+2. Click "⚙️ Settings" in the interface
+3. Enter your API credentials (YouTube API Key, Spotify Client ID, Client Secret, and Redirect URI)
+4. Click "Save Settings"
+5. Settings are automatically loaded for future sessions
 
-# Spotify API Configuration
-SPOTIFY_CLIENT_ID = 'your_actual_spotify_client_id_here'
-SPOTIFY_CLIENT_SECRET = 'your_actual_spotify_client_secret_here'
-SPOTIFY_REDIRECT_URI = 'redirect_uri_specified_when_creating_spotify_api_key'
-```
+**For CLI:**
+1. Launch the web UI first: `python app.py`
+2. Configure settings through the Settings panel
+3. Once configured, you can use the CLI: `python transfer.py`
 
-**Important**: Keep `config.py` private and never commit it to version control!
+**Important**: Keep `.app_settings.json` private and never commit it to version control!
 
 ## Usage
 
@@ -103,13 +106,20 @@ python app.py
 
 The app will automatically open in your default browser at `http://localhost:7860`
 
+**First-Time Setup:**
+1. Click "⚙️ Settings" to configure your API keys
+2. Enter your YouTube and Spotify credentials
+3. Click "Save Settings"
+
 **Workflow:**
 1. **Step 1**: Enter YouTube playlist URL → Click "Fetch Tracks"
-2. **Step 2**: Review matched tracks in the interactive table → Uncheck any you don't want
+2. **Step 2** (appears after fetching): Review matched tracks in the interactive table → Uncheck any you don't want
 3. **Step 3**: (Optional) Upload cover image, customize name and description
 4. **Step 4**: Click "Create Spotify Playlist"
 
 **Features:**
+- **Settings UI**: Configure API keys directly in the interface with persistent storage
+- **Progressive UI**: Step 2 only appears after tracks are successfully fetched
 - **Two-step workflow**: Fetch tracks first, then review before creating playlist
 - **Track preview & selection**: Review all matched tracks and uncheck any you don't want
 - **Custom cover images**: Upload your own playlist cover (JPEG/PNG, max 256KB)
@@ -128,6 +138,8 @@ Run the interactive CLI:
 python transfer.py
 ```
 
+**Note:** API keys must be configured first using the Web UI Settings panel. If settings aren't configured, you'll see an error message with instructions.
+
 You'll be prompted to:
 1. Enter YouTube playlist URL or ID
 2. (Optional) Enter custom Spotify playlist name
@@ -140,8 +152,14 @@ Use the transfer functionality in your own Python scripts:
 ```python
 from transfer import PlaylistTransfer
 
-# Initialize
-transfer = PlaylistTransfer()
+# Initialize with explicit credentials
+transfer = PlaylistTransfer(
+    youtube_api_key='your_youtube_api_key',
+    spotify_client_id='your_spotify_client_id',
+    spotify_client_secret='your_spotify_client_secret',
+    spotify_redirect_uri='http://127.0.0.1:8080/callback',
+    spotify_scope='playlist-modify-private playlist-modify-public ugc-image-upload'
+)
 
 # Transfer playlist
 playlist_url = transfer.transfer(
@@ -174,18 +192,6 @@ https://www.youtube.com/playlist?list=PLxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 Playlist ID only:
 PLxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-```
-
-## Configuration Options
-
-Edit `config.py` to customize behavior:
-
-```python
-# Make playlists public by default
-CREATE_PUBLIC_PLAYLISTS = True  # Default: False
-
-# Limit number of videos to process
-MAX_VIDEOS = 50  # Default: None (process all)
 ```
 
 ## How Track Matching Works
@@ -227,7 +233,7 @@ Each transfer creates a single timestamped log file in the `logs/` directory:
 
 ## Testing
 
-The project includes a comprehensive test suite with 77 tests covering all functionality.
+The project includes a comprehensive test suite with 89 tests covering all functionality.
 
 ### Run All Tests
 
@@ -243,6 +249,7 @@ python test_all_functionality.py
 - **6 tests** - Playlist transfer logic
 - **7 tests** - Edge cases
 - **15 tests** - Web UI and CLI functionality (two-step workflow, track selection, cover images, logs directory creation)
+- **12 tests** - Settings UI and configuration management (settings persistence, validation, .app_settings.json)
 
 All tests use mocking, so they run without requiring API credentials and don't consume API quotas.
 
@@ -250,14 +257,15 @@ All tests use mocking, so they run without requiring API credentials and don't c
 
 ```
 .
-├── config.py                  # API credentials configuration template
-├── transfer.py                # Main CLI script
 ├── app.py                     # Web UI application (Gradio)
+├── transfer.py                # Main CLI script
+├── config_manager.py          # Configuration management and persistence
 ├── youtube_handler.py         # YouTube API wrapper
 ├── spotify_handler.py         # Spotify API wrapper
 ├── utils.py                   # Helper functions
-├── test_all_functionality.py  # Comprehensive test suite (77 tests)
+├── test_all_functionality.py  # Comprehensive test suite (89 tests)
 ├── requirements.txt           # Python dependencies
+├── .app_settings.json         # User settings (created on first save, gitignored)
 ├── .gitignore                 # Git ignore rules
 ├── LICENSE                    # MIT License
 └── README.md                  # This file
@@ -287,14 +295,15 @@ All dependencies are automatically installed via `requirements.txt`.
 
 ### "Invalid API Key" Error
 
-- Verify your YouTube API key in `config.py`
+- Verify your YouTube API key in the Settings UI
 - Make sure YouTube Data API v3 is enabled in Google Cloud Console
-- Check that there are no extra spaces or quotes
+- Check that there are no extra spaces in the Settings panel
+- If needed, delete `.app_settings.json` and reconfigure through the Settings UI
 
 ### "Authentication Failed" Error (Spotify)
 
-- Verify your Spotify Client ID and Secret
-- Make sure Redirect URI is set to `http://localhost:8080`
+- Verify your Spotify Client ID and Secret in the Settings UI
+- Make sure Redirect URI is set to `http://127.0.0.1:8080/callback` in both the Settings panel and Spotify Developer Dashboard
 - Delete `.spotify_cache` and try again
 
 ### "Quota Exceeded" Error (YouTube)
@@ -302,7 +311,6 @@ All dependencies are automatically installed via `requirements.txt`.
 YouTube API has a daily quota of 10,000 units:
 - Each playlist items request costs ~1 unit per video
 - If you hit the limit, wait until the next day
-- Consider setting `MAX_VIDEOS` to limit requests
 
 ### "Not Found" for Many Tracks
 
@@ -329,13 +337,14 @@ pip install --upgrade gradio
 ## Privacy & Security
 
 - **Never share** your API credentials
-- **Never commit** filled `config.py` to version control
+- **Never commit** `.app_settings.json` to version control
 - The repository includes a `.gitignore` file that protects:
-  - `config_personal.py` - Your personal credentials file
+  - `.app_settings.json` - Your API credentials and settings
   - `.spotify_cache` - Spotify authentication cache
   - `logs/` - Transfer log files directory
 - All processing happens locally on your machine
 - Your API credentials never leave your computer
+- Settings are stored locally in `.app_settings.json` with restrictive file permissions
 - Spotify OAuth is handled securely via official libraries
 
 ## Limitations
@@ -362,13 +371,21 @@ def verify_match(youtube_title: str, spotify_track: dict, threshold: float = 0.6
 ```python
 from transfer import PlaylistTransfer
 
+# Initialize with credentials (from config_manager or manual input)
+transfer = PlaylistTransfer(
+    youtube_api_key='your_youtube_api_key',
+    spotify_client_id='your_spotify_client_id',
+    spotify_client_secret='your_spotify_client_secret',
+    spotify_redirect_uri='http://127.0.0.1:8080/callback',
+    spotify_scope='playlist-modify-private playlist-modify-public ugc-image-upload'
+)
+
 playlists = [
     'PLxxxxxxxxxxxxxx',
     'PLyyyyyyyyyyyyyy',
     'PLzzzzzzzzzzzzzz'
 ]
 
-transfer = PlaylistTransfer()
 for playlist_id in playlists:
     transfer.transfer(youtube_playlist_url=playlist_id)
 ```
