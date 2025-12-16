@@ -29,16 +29,57 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def validate_cover_image(image_path: str) -> Tuple[bool, str]:
+    """
+    Validate cover image meets Spotify requirements.
+
+    Args:
+        image_path: Path to uploaded image file
+
+    Returns:
+        Tuple of (is_valid, error_message)
+    """
+    import os
+    from PIL import Image
+
+    if not image_path or not os.path.exists(image_path):
+        return True, ""  # No image provided, that's fine
+
+    try:
+        # Check file size (max 256KB)
+        file_size = os.path.getsize(image_path)
+        max_size = 256 * 1024  # 256KB in bytes
+
+        if file_size > max_size:
+            size_kb = file_size / 1024
+            return False, f"Image too large: {size_kb:.1f}KB (max 256KB). Please compress or resize your image."
+
+        # Check format (JPEG/PNG only)
+        with Image.open(image_path) as img:
+            if img.format not in ['JPEG', 'PNG']:
+                return False, f"Invalid format: {img.format}. Only JPEG and PNG are supported."
+
+            # Check dimensions (Spotify recommends square images)
+            width, height = img.size
+            if width < 300 or height < 300:
+                return False, f"Image too small: {width}x{height}. Minimum recommended size is 300x300 pixels."
+
+        return True, ""
+
+    except Exception as e:
+        return False, f"Failed to validate image: {str(e)}"
+
+
 def fetch_tracks(
     youtube_url: str,
     include_low_confidence: bool,
     progress=gr.Progress()
-) -> Tuple[str, List, dict, str]:
+) -> Tuple[str, List, dict, str, gr.update, gr.update]:
     """
     Fetch and match tracks from YouTube playlist.
 
     Returns:
-        Tuple of (status_message, tracks_dataframe, state_dict, statistics)
+        Tuple of (status_message, tracks_dataframe, state_dict, statistics, placeholder_visibility, content_visibility)
     """
     try:
         # Validate input
@@ -48,7 +89,8 @@ def fetch_tracks(
                 [],
                 {},
                 "",
-                gr.update(visible=False)
+                gr.update(visible=True),   # Show placeholder
+                gr.update(visible=False)   # Hide content
             )
 
         progress(0.1, desc="Initializing...")
@@ -66,7 +108,8 @@ def fetch_tracks(
                 [],
                 {},
                 "",
-                gr.update(visible=False)
+                gr.update(visible=True),   # Show placeholder
+                gr.update(visible=False)   # Hide content
             )
 
         # Initialize transfer with settings
@@ -85,7 +128,8 @@ def fetch_tracks(
                 [],
                 {},
                 "",
-                gr.update(visible=False)
+                gr.update(visible=True),   # Show placeholder
+                gr.update(visible=False)   # Hide content
             )
 
         progress(0.2, desc="Fetching YouTube playlist...")
@@ -102,7 +146,8 @@ def fetch_tracks(
                 [],
                 {},
                 "",
-                gr.update(visible=False)
+                gr.update(visible=True),   # Show placeholder
+                gr.update(visible=False)   # Hide content
             )
 
         if not videos:
@@ -111,14 +156,30 @@ def fetch_tracks(
                 [],
                 {},
                 "",
-                gr.update(visible=False)
+                gr.update(visible=True),   # Show placeholder
+                gr.update(visible=False)   # Hide content
             )
 
-        progress(0.4, desc=f"Found {len(videos)} videos. Matching tracks on Spotify...")
+        progress(0.4, desc=f"Found {len(videos)} videos. Starting track matching...")
 
-        # Match tracks
-        matches = transfer.match_tracks(videos)
+        # Define progress callback for per-track updates
+        def update_matching_progress(current, total, title):
+            # Calculate progress from 0.4 to 0.9 (50% of the bar)
+            base_progress = 0.4
+            track_progress = (current / total) * 0.5
+            overall_progress = base_progress + track_progress
 
+            # Truncate long titles for display
+            short_title = title[:60] + "..." if len(title) > 60 else title
+            progress(
+                overall_progress,
+                desc=f"Matching track {current}/{total}: {short_title}"
+            )
+
+        # Match tracks with progress callback
+        matches = transfer.match_tracks(videos, progress_callback=update_matching_progress)
+
+        progress(0.95, desc="Finalizing matches...")
         progress(1.0, desc="Complete!")
 
         # Build dataframe for track selection
@@ -183,7 +244,14 @@ def fetch_tracks(
 5. Click "Create Spotify Playlist"
 """
 
-        return (status_msg, tracks_data, state_data, stats, gr.update(visible=True))
+        return (
+            status_msg,
+            tracks_data,
+            state_data,
+            stats,
+            gr.update(visible=False),  # Hide placeholder
+            gr.update(visible=True)    # Show content
+        )
 
     except Exception as e:
         logger.exception("Unexpected error during fetch")
@@ -192,7 +260,8 @@ def fetch_tracks(
             [],
             {},
             "",
-            gr.update(visible=False)
+            gr.update(visible=True),   # Show placeholder
+            gr.update(visible=False)   # Hide content
         )
 
 
@@ -211,11 +280,21 @@ def create_playlist(
         Tuple of (status_message, playlist_url)
     """
     try:
+        # Validate state
         if not state_dict or 'matches' not in state_dict:
             return (
                 "❌ Error: Please fetch tracks first before creating playlist",
                 ""
             )
+
+        # Validate cover image if provided
+        if cover_image is not None:
+            is_valid, error_msg = validate_cover_image(cover_image)
+            if not is_valid:
+                return (
+                    f"❌ Cover Image Error: {error_msg}",
+                    ""
+                )
 
         progress(0.1, desc="Initializing...")
 
@@ -290,6 +369,13 @@ def create_playlist(
         if not spotify_name or not spotify_name.strip():
             spotify_name = f"{playlist_info['title']} (from YouTube)"
 
+        # Validate playlist name
+        if len(spotify_name) > 100:
+            return (
+                f"❌ Error: Playlist name too long ({len(spotify_name)} characters). Maximum is 100 characters.",
+                ""
+            )
+
         # Use custom description if provided, otherwise default
         if not description or not description.strip():
             description = f"Transferred from YouTube playlist: {playlist_info['title']}"
@@ -363,6 +449,18 @@ def create_playlist(
 
         return (status_msg, playlist_url)
 
+    except PermissionError as e:
+        logger.exception("Permission error during playlist creation")
+        return (
+            f"❌ Permission Error: Cannot access files. Please check file permissions.\n\nDetails: {str(e)}",
+            ""
+        )
+    except ConnectionError as e:
+        logger.exception("Connection error during playlist creation")
+        return (
+            f"❌ Network Error: Cannot connect to Spotify. Please check your internet connection.\n\nDetails: {str(e)}",
+            ""
+        )
     except Exception as e:
         logger.exception("Unexpected error during playlist creation")
         return (
@@ -397,6 +495,87 @@ def load_current_settings() -> Dict:
         'create_public_playlists': False,
         'max_videos': None
     }
+
+
+def check_model_status() -> str:
+    """
+    Check if embedding model is downloaded and return status message.
+
+    Returns:
+        Markdown formatted status message
+    """
+    from utils import _embedding_matcher
+
+    try:
+        status = _embedding_matcher.get_model_status()
+
+        status_msg = f"""
+### 📊 Model Status Check
+
+**Model:** all-mpnet-base-v2 &nbsp;&nbsp;&nbsp; **Size:** ~420MB &nbsp;&nbsp;&nbsp; **Status:** {status}
+
+**What this means:**
+- ✓ **Downloaded**: Model is ready to use
+- **Not downloaded**: Model will download automatically on first use (one-time, ~2-3 minutes)
+
+The model improves track matching accuracy using semantic similarity instead of simple text matching.
+        """
+
+        return status_msg
+
+    except Exception as e:
+        return f"""
+### ❌ Error Checking Model Status
+
+Could not check model status: {str(e)}
+
+The model will still attempt to download automatically when needed.
+        """
+
+
+def check_config_status() -> str:
+    """
+    Check if API configuration is saved and return status message.
+
+    Returns:
+        Markdown formatted status message
+    """
+    from config_manager import ConfigManager
+
+    config_mgr = ConfigManager()
+
+    if config_mgr.settings_exist():
+        try:
+            settings = config_mgr.load_settings()
+
+            # Check if all required fields are present
+            required_fields = ['youtube_api_key', 'spotify_client_id', 'spotify_client_secret']
+            all_present = all(settings.get(field) for field in required_fields)
+
+            if all_present:
+                return """
+✅ **Configuration Status:** API credentials are configured and saved in `.app_settings.json`
+
+Your credentials are ready to use. You can update them below if needed.
+"""
+            else:
+                return """
+⚠️ **Configuration Status:** Incomplete configuration found
+
+Some required API credentials are missing. Please complete the configuration below.
+"""
+        except Exception:
+            return """
+⚠️ **Configuration Status:** Error reading saved configuration
+
+Please configure your API credentials below.
+"""
+    else:
+        return """
+❌ **Configuration Status:** No saved configuration found
+
+Please configure your API credentials below to get started.
+"""
 
 
 def save_settings_handler(
@@ -519,6 +698,9 @@ def create_ui():
         gr.Markdown("## ⚙️ Settings & Configuration")
 
         with gr.Accordion("API Configuration", open=False):
+            # Configuration status indicator
+            config_status_display = gr.Markdown()
+
             gr.Markdown("""
 ### Configure Your API Credentials
 
@@ -601,6 +783,25 @@ Settings are saved locally and will be used for all future transfers.
             save_settings_btn = gr.Button("💾 Save Settings", variant="primary", size="lg")
             settings_status = gr.Markdown()
 
+        # Model Status Section
+        with gr.Accordion("🤖 Semantic Matching Model Status", open=False):
+            gr.Markdown("""
+### About the Semantic Matching Model
+
+This application uses **all-mpnet-base-v2**, a sentence transformer model for improved track matching accuracy.
+
+**Model Details:**
+- **Size:** ~420MB
+- **Download:** One-time, automatic on first use
+- **Purpose:** Semantic similarity matching between YouTube titles and Spotify tracks
+- **Benefits:** Better matching accuracy than simple text similarity
+
+The model will download automatically when you fetch tracks for the first time.
+            """)
+
+            check_model_btn = gr.Button("🔍 Check Model Status", size="sm")
+            model_status_display = gr.Markdown("**Status:** Click button to check")
+
         gr.Markdown("---")
 
         # Step 1: Fetch Tracks
@@ -635,13 +836,12 @@ Settings are saved locally and will be used for all future transfers.
                     **Requirements:**
                     - YouTube API key
                     - Spotify API credentials
-                    - Configure in `config.py`
+                    - Configure in **Settings** tab
 
                     **Features:**
-                    - Intelligent title parsing
-                    - Multiple search strategies
-                    - Confidence scoring
+                    - Semantic similarity matching
                     - Track preview & selection
+                    - Playlist customization
                     """
                 )
 
@@ -654,17 +854,34 @@ Settings are saved locally and will be used for all future transfers.
         gr.Markdown("---")
 
         # Step 2: Review and Select Tracks
-        with gr.Column(visible=False) as step2_section:
+        with gr.Column(visible=True) as step2_section:
             gr.Markdown("## Step 2: Review & Select Tracks")
 
-            tracks_table = gr.Dataframe(
-                headers=["Include", "YouTube Title", "Spotify Match", "Confidence"],
-                datatype=["bool", "str", "str", "str"],
-                col_count=(4, "fixed"),
-                interactive=True,
-                wrap=True,
-                label="Matched Tracks (uncheck any you don't want)"
-            )
+            # Placeholder shown initially
+            with gr.Row(visible=True) as step2_placeholder:
+                gr.Markdown("""
+### ⏳ Waiting for tracks...
+
+Please complete **Step 1** to fetch and preprocess your YouTube playlist tracks.
+
+Once processing is complete, this section will show:
+- All matched tracks from your playlist
+- Confidence levels for each match
+- Ability to select/deselect tracks before creating your Spotify playlist
+                """)
+
+            # Actual tracks table (hidden initially)
+            with gr.Column(visible=False) as step2_content:
+                gr.Markdown("Review the matched tracks below and uncheck any you don't want to include:")
+
+                tracks_table = gr.Dataframe(
+                    headers=["Include", "YouTube Title", "Spotify Match", "Confidence"],
+                    datatype=["bool", "str", "str", "str"],
+                    col_count=(4, "fixed"),
+                    interactive=True,
+                    wrap=True,
+                    label="Matched Tracks (uncheck any you don't want)"
+                )
 
         gr.Markdown("---")
 
@@ -739,7 +956,7 @@ Settings are saved locally and will be used for all future transfers.
         fetch_btn.click(
             fn=fetch_tracks,
             inputs=[youtube_input, include_low_conf],
-            outputs=[fetch_status, tracks_table, state, fetch_stats, step2_section],
+            outputs=[fetch_status, tracks_table, state, fetch_stats, step2_placeholder, step2_content],
         )
 
         # Connect the create button
@@ -762,6 +979,24 @@ Settings are saved locally and will be used for all future transfers.
                 max_videos_input
             ],
             outputs=[settings_status]
+        )
+
+        # Connect the model status check button
+        check_model_btn.click(
+            fn=check_model_status,
+            outputs=[model_status_display]
+        )
+
+        # Check model status on page load
+        app.load(
+            fn=check_model_status,
+            outputs=[model_status_display]
+        )
+
+        # Check config status on page load
+        app.load(
+            fn=check_config_status,
+            outputs=[config_status_display]
         )
 
     return app
