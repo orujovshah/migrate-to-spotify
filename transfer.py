@@ -96,31 +96,40 @@ class PlaylistTransfer:
         logger.info(f"✓ Found {len(videos)} videos")
         return playlist_info, videos
     
-    def match_tracks(self, videos: List[Dict]) -> List[Tuple[Dict, Dict, str]]:
+    def match_tracks(self, videos: List[Dict], progress_callback=None) -> List[Tuple[Dict, Dict, str]]:
         """
         Match YouTube videos to Spotify tracks.
-        
+
         Args:
             videos: List of YouTube video dictionaries
-            
+            progress_callback: Optional function(current, total, title) for progress updates
+
         Returns:
             List of tuples (youtube_video, spotify_track, status)
         """
         logger.info(f"\n{'='*60}")
         logger.info("STEP 2: Matching tracks on Spotify...")
         logger.info(f"{'='*60}")
-        
+
         matches = []
-        
+        total_videos = len(videos)
+
         for i, video in enumerate(videos, 1):
             video_title = video['title']
-            logger.info(f"\n[{i}/{len(videos)}] YouTube: {video_title}")
-            
+            logger.info(f"\n[{i}/{total_videos}] YouTube: {video_title}")
+
+            # Call progress callback if provided
+            if progress_callback:
+                progress_callback(i, total_videos, video_title)
+
             # Build search queries
             queries = build_search_queries(video_title)
-            
+
             # Search on Spotify
-            spotify_track = self.spotify.search_track_best_match(queries)
+            spotify_track = self.spotify.search_track_best_match(
+                queries=queries,
+                youtube_title=video_title
+            )
             
             if spotify_track:
                 # Verify match quality
