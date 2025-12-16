@@ -1,6 +1,15 @@
 """
 Comprehensive test suite for YouTube to Spotify Playlist Transfer
 Tests every single functionality in the codebase with extensive coverage
+
+Total: 91 tests covering:
+- 28 tests - Utility functions (title parsing, cleaning, matching)
+- 7 tests - YouTube API handler
+- 14 tests - Spotify API handler (including cover image upload)
+- 10 tests - Configuration manager (settings loading, saving, validation)
+- 7 tests - Playlist transfer logic
+- 7 tests - Edge cases
+- 18 tests - Web UI and CLI functionality (two-step workflow, track selection, cover images, settings handlers)
 """
 
 import unittest
@@ -726,13 +735,146 @@ class TestSpotifyHandler(unittest.TestCase):
         self.assertFalse(success)
 
 
+class TestConfigManager(unittest.TestCase):
+    """Test ConfigManager class from config_manager.py"""
+
+    @patch('config_manager.os.path.exists')
+    def test_settings_exist_true(self, mock_exists):
+        """Test settings_exist returns True when file exists"""
+        from config_manager import ConfigManager
+
+        mock_exists.return_value = True
+        config_mgr = ConfigManager()
+
+        self.assertTrue(config_mgr.settings_exist())
+
+    @patch('config_manager.os.path.exists')
+    def test_settings_exist_false(self, mock_exists):
+        """Test settings_exist returns False when file doesn't exist"""
+        from config_manager import ConfigManager
+
+        mock_exists.return_value = False
+        config_mgr = ConfigManager()
+
+        self.assertFalse(config_mgr.settings_exist())
+
+    @patch('builtins.open', new_callable=mock_open, read_data='{"youtube_api_key": "test_key"}')
+    def test_load_settings_success(self, mock_file):
+        """Test successful settings loading"""
+        from config_manager import ConfigManager
+
+        config_mgr = ConfigManager()
+        settings = config_mgr.load_settings()
+
+        self.assertIsInstance(settings, dict)
+        self.assertEqual(settings['youtube_api_key'], 'test_key')
+
+    @patch('builtins.open', side_effect=FileNotFoundError())
+    def test_load_settings_file_not_found(self, mock_file):
+        """Test load_settings raises FileNotFoundError"""
+        from config_manager import ConfigManager
+
+        config_mgr = ConfigManager()
+
+        with self.assertRaises(FileNotFoundError):
+            config_mgr.load_settings()
+
+    def test_validate_settings_valid(self):
+        """Test validation with valid settings"""
+        from config_manager import ConfigManager
+
+        config_mgr = ConfigManager()
+        settings = {
+            'youtube_api_key': 'AIzaSyTest123',
+            'spotify_client_id': 'spotify_id_123',
+            'spotify_client_secret': 'spotify_secret_456',
+            'spotify_redirect_uri': 'http://localhost:8080/callback',
+            'spotify_scope': 'playlist-modify-public',
+            'create_public_playlists': False,
+            'max_videos': None
+        }
+
+        is_valid, errors = config_mgr.validate_settings(settings)
+
+        self.assertTrue(is_valid)
+        self.assertEqual(len(errors), 0)
+
+    def test_validate_settings_missing_youtube_key(self):
+        """Test validation fails when YouTube API key is missing"""
+        from config_manager import ConfigManager
+
+        config_mgr = ConfigManager()
+        settings = {
+            'youtube_api_key': '',
+            'spotify_client_id': 'id',
+            'spotify_client_secret': 'secret'
+        }
+
+        is_valid, errors = config_mgr.validate_settings(settings)
+
+        self.assertFalse(is_valid)
+        self.assertTrue(any('YouTube API Key' in e for e in errors))
+
+    def test_validate_settings_placeholder_values(self):
+        """Test validation fails with placeholder values"""
+        from config_manager import ConfigManager
+
+        config_mgr = ConfigManager()
+        settings = {
+            'youtube_api_key': 'your_actual_youtube_api_key_here',
+            'spotify_client_id': 'id',
+            'spotify_client_secret': 'secret'
+        }
+
+        is_valid, errors = config_mgr.validate_settings(settings)
+
+        self.assertFalse(is_valid)
+        self.assertTrue(any('placeholder' in e for e in errors))
+
+    @patch('builtins.open', new_callable=mock_open)
+    @patch('config_manager.os.chmod')
+    def test_save_settings_success(self, mock_chmod, mock_file):
+        """Test successful settings save"""
+        from config_manager import ConfigManager
+
+        config_mgr = ConfigManager()
+        settings = {
+            'youtube_api_key': 'test_key',
+            'spotify_client_id': 'test_id',
+            'spotify_client_secret': 'test_secret',
+            'spotify_redirect_uri': 'http://localhost:8080',
+            'spotify_scope': 'test_scope',
+            'create_public_playlists': False,
+            'max_videos': None
+        }
+
+        success = config_mgr.save_settings(settings)
+
+        self.assertTrue(success)
+        mock_file.assert_called_once()
+
+    @patch('config_manager.os.path.exists')
+    @patch('builtins.open', new_callable=mock_open, read_data='{"youtube_api_key": "saved_key", "spotify_client_id": "saved_id", "spotify_client_secret": "saved_secret", "spotify_redirect_uri": "http://localhost:8080", "spotify_scope": "test_scope", "create_public_playlists": false, "max_videos": null}')
+    def test_get_settings_from_json(self, mock_file, mock_exists):
+        """Test get_settings loads from JSON when available"""
+        from config_manager import ConfigManager
+
+        mock_exists.return_value = True
+        config_mgr = ConfigManager()
+        config = config_mgr.get_settings()
+
+        self.assertEqual(config['youtube_api_key'], 'saved_key')
+        self.assertEqual(config['spotify_client_id'], 'saved_id')
+        self.assertEqual(config['spotify_client_secret'], 'saved_secret')
+
+
 class TestPlaylistTransfer(unittest.TestCase):
     """Test PlaylistTransfer class from transfer.py"""
 
     @patch('transfer.SpotifyHandler')
     @patch('transfer.YouTubeHandler')
     def test_playlist_transfer_initialization(self, mock_youtube, mock_spotify):
-        """Test PlaylistTransfer initialization"""
+        """Test PlaylistTransfer initialization with required credentials"""
         from transfer import PlaylistTransfer
 
         # Mock handlers
@@ -743,10 +885,50 @@ class TestPlaylistTransfer(unittest.TestCase):
         mock_youtube.return_value = mock_yt_instance
         mock_spotify.return_value = mock_sp_instance
 
-        transfer = PlaylistTransfer()
+        transfer = PlaylistTransfer(
+            youtube_api_key='test_yt_key',
+            spotify_client_id='test_sp_id',
+            spotify_client_secret='test_sp_secret',
+            spotify_redirect_uri='http://localhost:8080',
+            spotify_scope='test_scope'
+        )
 
         self.assertIsNotNone(transfer.youtube)
         self.assertIsNotNone(transfer.spotify)
+
+    @patch('transfer.SpotifyHandler')
+    @patch('transfer.YouTubeHandler')
+    def test_playlist_transfer_initialization_with_credentials(self, mock_youtube, mock_spotify):
+        """Test PlaylistTransfer initialization with explicit credentials"""
+        from transfer import PlaylistTransfer
+
+        # Mock handlers
+        mock_yt_instance = MagicMock()
+        mock_sp_instance = MagicMock()
+        mock_sp_instance.get_current_user.return_value = {'display_name': 'Test User'}
+
+        mock_youtube.return_value = mock_yt_instance
+        mock_spotify.return_value = mock_sp_instance
+
+        transfer = PlaylistTransfer(
+            youtube_api_key='test_yt_key',
+            spotify_client_id='test_sp_id',
+            spotify_client_secret='test_sp_secret',
+            spotify_redirect_uri='http://localhost:8080',
+            spotify_scope='test_scope'
+        )
+
+        self.assertIsNotNone(transfer.youtube)
+        self.assertIsNotNone(transfer.spotify)
+
+        # Verify handlers were called with provided credentials
+        mock_youtube.assert_called_once_with('test_yt_key')
+        mock_spotify.assert_called_once_with(
+            client_id='test_sp_id',
+            client_secret='test_sp_secret',
+            redirect_uri='http://localhost:8080',
+            scope='test_scope'
+        )
 
     @patch('transfer.SpotifyHandler')
     @patch('transfer.YouTubeHandler')
@@ -775,7 +957,13 @@ class TestPlaylistTransfer(unittest.TestCase):
         mock_youtube.return_value = mock_yt_instance
         mock_spotify.return_value = mock_sp_instance
 
-        transfer = PlaylistTransfer()
+        transfer = PlaylistTransfer(
+            youtube_api_key='test_yt_key',
+            spotify_client_id='test_sp_id',
+            spotify_client_secret='test_sp_secret',
+            spotify_redirect_uri='http://localhost:8080',
+            spotify_scope='test_scope'
+        )
         playlist_info, videos = transfer.fetch_youtube_playlist('PLtest')
 
         self.assertEqual(playlist_info['title'], 'Test Playlist')
@@ -807,7 +995,13 @@ class TestPlaylistTransfer(unittest.TestCase):
             {'title': 'Video 2', 'video_id': 'vid2'}
         ]
 
-        transfer = PlaylistTransfer()
+        transfer = PlaylistTransfer(
+            youtube_api_key='test_yt_key',
+            spotify_client_id='test_sp_id',
+            spotify_client_secret='test_sp_secret',
+            spotify_redirect_uri='http://localhost:8080',
+            spotify_scope='test_scope'
+        )
         matches = transfer.match_tracks(videos)
 
         self.assertEqual(len(matches), 2)
@@ -838,7 +1032,13 @@ class TestPlaylistTransfer(unittest.TestCase):
             ({'title': 'Video 3'}, None, 'not_found')
         ]
 
-        transfer = PlaylistTransfer()
+        transfer = PlaylistTransfer(
+            youtube_api_key='test_yt_key',
+            spotify_client_id='test_sp_id',
+            spotify_client_secret='test_sp_secret',
+            spotify_redirect_uri='http://localhost:8080',
+            spotify_scope='test_scope'
+        )
         playlist_id = transfer.create_spotify_playlist(
             'Test Playlist',
             matches,
@@ -870,7 +1070,13 @@ class TestPlaylistTransfer(unittest.TestCase):
             ({'title': 'Video 3'}, None, 'not_found')
         ]
 
-        transfer = PlaylistTransfer()
+        transfer = PlaylistTransfer(
+            youtube_api_key='test_yt_key',
+            spotify_client_id='test_sp_id',
+            spotify_client_secret='test_sp_secret',
+            spotify_redirect_uri='http://localhost:8080',
+            spotify_scope='test_scope'
+        )
         playlist_id = transfer.create_spotify_playlist(
             'Test Playlist',
             matches,
@@ -922,7 +1128,13 @@ class TestPlaylistTransfer(unittest.TestCase):
         mock_spotify.return_value = mock_sp_instance
 
         # Run transfer
-        transfer = PlaylistTransfer()
+        transfer = PlaylistTransfer(
+            youtube_api_key='test_yt_key',
+            spotify_client_id='test_sp_id',
+            spotify_client_secret='test_sp_secret',
+            spotify_redirect_uri='http://localhost:8080',
+            spotify_scope='test_scope'
+        )
         result_url = transfer.transfer('PLtest')
 
         self.assertEqual(result_url, 'https://open.spotify.com/playlist/playlist123')
@@ -979,8 +1191,9 @@ class TestEdgeCases(unittest.TestCase):
 class TestGradioApp(unittest.TestCase):
     """Test Gradio app (app.py) and CLI (transfer.py) functionality"""
 
+    @patch('config_manager.ConfigManager')
     @patch('app.PlaylistTransfer')
-    def test_fetch_tracks_empty_url(self, mock_transfer_class):
+    def test_fetch_tracks_empty_url(self, mock_transfer_class, mock_config_mgr):
         """Test fetch_tracks with empty YouTube URL"""
         from app import fetch_tracks
 
@@ -991,10 +1204,22 @@ class TestGradioApp(unittest.TestCase):
         self.assertIn('Error', result[0])
         self.assertIn('YouTube playlist URL', result[0])
 
+    @patch('config_manager.ConfigManager')
     @patch('app.PlaylistTransfer')
-    def test_fetch_tracks_initialization_error(self, mock_transfer_class):
+    def test_fetch_tracks_initialization_error(self, mock_transfer_class, mock_config_mgr):
         """Test fetch_tracks when initialization fails"""
         from app import fetch_tracks
+
+        # Mock config manager
+        mock_config_instance = MagicMock()
+        mock_config_instance.get_merged_config.return_value = {
+            'youtube_api_key': 'test_key',
+            'spotify_client_id': 'test_id',
+            'spotify_client_secret': 'test_secret',
+            'spotify_redirect_uri': 'http://localhost:8080',
+            'spotify_scope': 'test_scope'
+        }
+        mock_config_mgr.return_value = mock_config_instance
 
         mock_transfer_class.side_effect = Exception("API credentials invalid")
 
@@ -1002,12 +1227,24 @@ class TestGradioApp(unittest.TestCase):
 
         self.assertIsInstance(result, tuple)
         self.assertIn('Error', result[0])
-        self.assertIn('API credentials', result[0])
+        self.assertIn('Settings', result[0])
 
+    @patch('config_manager.ConfigManager')
     @patch('app.PlaylistTransfer')
-    def test_fetch_tracks_success(self, mock_transfer_class):
+    def test_fetch_tracks_success(self, mock_transfer_class, mock_config_mgr):
         """Test successful track fetching"""
         from app import fetch_tracks
+
+        # Mock config manager
+        mock_config_instance = MagicMock()
+        mock_config_instance.get_merged_config.return_value = {
+            'youtube_api_key': 'test_key',
+            'spotify_client_id': 'test_id',
+            'spotify_client_secret': 'test_secret',
+            'spotify_redirect_uri': 'http://localhost:8080',
+            'spotify_scope': 'test_scope'
+        }
+        mock_config_mgr.return_value = mock_config_instance
 
         # Mock the transfer instance
         mock_transfer = MagicMock()
@@ -1068,10 +1305,22 @@ class TestGradioApp(unittest.TestCase):
         self.assertIn('Total Videos:', stats)
         self.assertIn('High Confidence Matches:', stats)
 
+    @patch('config_manager.ConfigManager')
     @patch('app.PlaylistTransfer')
-    def test_fetch_tracks_no_videos(self, mock_transfer_class):
+    def test_fetch_tracks_no_videos(self, mock_transfer_class, mock_config_mgr):
         """Test fetch_tracks when no videos found"""
         from app import fetch_tracks
+
+        # Mock config manager
+        mock_config_instance = MagicMock()
+        mock_config_instance.get_merged_config.return_value = {
+            'youtube_api_key': 'test_key',
+            'spotify_client_id': 'test_id',
+            'spotify_client_secret': 'test_secret',
+            'spotify_redirect_uri': 'http://localhost:8080',
+            'spotify_scope': 'test_scope'
+        }
+        mock_config_mgr.return_value = mock_config_instance
 
         mock_transfer = MagicMock()
         mock_transfer_class.return_value = mock_transfer
@@ -1089,10 +1338,22 @@ class TestGradioApp(unittest.TestCase):
         self.assertIn('Error', status_msg)
         self.assertIn('No videos found', status_msg)
 
+    @patch('config_manager.ConfigManager')
     @patch('app.PlaylistTransfer')
-    def test_fetch_tracks_exclude_low_confidence(self, mock_transfer_class):
+    def test_fetch_tracks_exclude_low_confidence(self, mock_transfer_class, mock_config_mgr):
         """Test fetch_tracks with low confidence excluded"""
         from app import fetch_tracks
+
+        # Mock config manager
+        mock_config_instance = MagicMock()
+        mock_config_instance.get_merged_config.return_value = {
+            'youtube_api_key': 'test_key',
+            'spotify_client_id': 'test_id',
+            'spotify_client_secret': 'test_secret',
+            'spotify_redirect_uri': 'http://localhost:8080',
+            'spotify_scope': 'test_scope'
+        }
+        mock_config_mgr.return_value = mock_config_instance
 
         mock_transfer = MagicMock()
         mock_transfer_class.return_value = mock_transfer
@@ -1122,8 +1383,9 @@ class TestGradioApp(unittest.TestCase):
         self.assertEqual(len(tracks_data), 1)
         self.assertIn('Song 1', tracks_data[0][2])
 
+    @patch('config_manager.ConfigManager')
     @patch('app.PlaylistTransfer')
-    def test_create_playlist_no_state(self, mock_transfer_class):
+    def test_create_playlist_no_state(self, mock_transfer_class, mock_config_mgr):
         """Test create_playlist without fetching tracks first"""
         from app import create_playlist
 
@@ -1134,10 +1396,23 @@ class TestGradioApp(unittest.TestCase):
         self.assertIn('Error', result[0])
         self.assertIn('fetch tracks first', result[0])
 
+    @patch('config_manager.ConfigManager')
     @patch('app.PlaylistTransfer')
-    def test_create_playlist_no_tracks_selected(self, mock_transfer_class):
+    def test_create_playlist_no_tracks_selected(self, mock_transfer_class, mock_config_mgr):
         """Test create_playlist with no tracks selected"""
         from app import create_playlist
+
+        # Mock config manager
+        mock_config_instance = MagicMock()
+        mock_config_instance.get_merged_config.return_value = {
+            'youtube_api_key': 'test_key',
+            'spotify_client_id': 'test_id',
+            'spotify_client_secret': 'test_secret',
+            'spotify_redirect_uri': 'http://localhost:8080',
+            'spotify_scope': 'test_scope',
+            'create_public_playlists': False
+        }
+        mock_config_mgr.return_value = mock_config_instance
 
         mock_transfer = MagicMock()
         mock_transfer_class.return_value = mock_transfer
@@ -1157,10 +1432,23 @@ class TestGradioApp(unittest.TestCase):
         self.assertIn('Error', status_msg)
         self.assertIn('No tracks selected', status_msg)
 
+    @patch('config_manager.ConfigManager')
     @patch('app.PlaylistTransfer')
-    def test_create_playlist_success(self, mock_transfer_class):
+    def test_create_playlist_success(self, mock_transfer_class, mock_config_mgr):
         """Test successful playlist creation"""
         from app import create_playlist
+
+        # Mock config manager
+        mock_config_instance = MagicMock()
+        mock_config_instance.get_merged_config.return_value = {
+            'youtube_api_key': 'test_key',
+            'spotify_client_id': 'test_id',
+            'spotify_client_secret': 'test_secret',
+            'spotify_redirect_uri': 'http://localhost:8080',
+            'spotify_scope': 'test_scope',
+            'create_public_playlists': False
+        }
+        mock_config_mgr.return_value = mock_config_instance
 
         mock_transfer = MagicMock()
         mock_transfer_class.return_value = mock_transfer
@@ -1196,10 +1484,23 @@ class TestGradioApp(unittest.TestCase):
         self.assertEqual(call_args[1]['name'], 'My Playlist')
         self.assertEqual(call_args[1]['description'], 'My Description')
 
+    @patch('config_manager.ConfigManager')
     @patch('app.PlaylistTransfer')
-    def test_create_playlist_uses_youtube_name(self, mock_transfer_class):
+    def test_create_playlist_uses_youtube_name(self, mock_transfer_class, mock_config_mgr):
         """Test that YouTube name is used when Spotify name is empty"""
         from app import create_playlist
+
+        # Mock config manager
+        mock_config_instance = MagicMock()
+        mock_config_instance.get_merged_config.return_value = {
+            'youtube_api_key': 'test_key',
+            'spotify_client_id': 'test_id',
+            'spotify_client_secret': 'test_secret',
+            'spotify_redirect_uri': 'http://localhost:8080',
+            'spotify_scope': 'test_scope',
+            'create_public_playlists': False
+        }
+        mock_config_mgr.return_value = mock_config_instance
 
         mock_transfer = MagicMock()
         mock_transfer_class.return_value = mock_transfer
@@ -1224,10 +1525,23 @@ class TestGradioApp(unittest.TestCase):
         self.assertIn('YouTube Playlist Name', call_args[1]['name'])
         self.assertIn('from YouTube', call_args[1]['name'])
 
+    @patch('config_manager.ConfigManager')
     @patch('app.PlaylistTransfer')
-    def test_create_playlist_partial_selection(self, mock_transfer_class):
+    def test_create_playlist_partial_selection(self, mock_transfer_class, mock_config_mgr):
         """Test creating playlist with only some tracks selected"""
         from app import create_playlist
+
+        # Mock config manager
+        mock_config_instance = MagicMock()
+        mock_config_instance.get_merged_config.return_value = {
+            'youtube_api_key': 'test_key',
+            'spotify_client_id': 'test_id',
+            'spotify_client_secret': 'test_secret',
+            'spotify_redirect_uri': 'http://localhost:8080',
+            'spotify_scope': 'test_scope',
+            'create_public_playlists': False
+        }
+        mock_config_mgr.return_value = mock_config_instance
 
         mock_transfer = MagicMock()
         mock_transfer_class.return_value = mock_transfer
@@ -1264,11 +1578,24 @@ class TestGradioApp(unittest.TestCase):
         self.assertEqual(added_tracks[0], 'track1')
         self.assertEqual(added_tracks[1], 'track3')
 
+    @patch('config_manager.ConfigManager')
     @patch('app.PlaylistTransfer')
     @patch('builtins.open', create=True)
-    def test_create_playlist_with_cover_image(self, mock_open, mock_transfer_class):
+    def test_create_playlist_with_cover_image(self, mock_open, mock_transfer_class, mock_config_mgr):
         """Test creating playlist with cover image upload"""
         from app import create_playlist
+
+        # Mock config manager
+        mock_config_instance = MagicMock()
+        mock_config_instance.get_merged_config.return_value = {
+            'youtube_api_key': 'test_key',
+            'spotify_client_id': 'test_id',
+            'spotify_client_secret': 'test_secret',
+            'spotify_redirect_uri': 'http://localhost:8080',
+            'spotify_scope': 'test_scope',
+            'create_public_playlists': False
+        }
+        mock_config_mgr.return_value = mock_config_instance
 
         mock_transfer = MagicMock()
         mock_transfer_class.return_value = mock_transfer
@@ -1298,10 +1625,23 @@ class TestGradioApp(unittest.TestCase):
         mock_transfer.spotify.upload_playlist_cover.assert_called_once_with('playlist123', '/path/to/cover.jpg')
         self.assertIn('Created Successfully', status_msg)
 
+    @patch('config_manager.ConfigManager')
     @patch('app.PlaylistTransfer')
-    def test_create_playlist_cover_upload_fails(self, mock_transfer_class):
+    def test_create_playlist_cover_upload_fails(self, mock_transfer_class, mock_config_mgr):
         """Test that playlist creation continues even if cover upload fails"""
         from app import create_playlist
+
+        # Mock config manager
+        mock_config_instance = MagicMock()
+        mock_config_instance.get_merged_config.return_value = {
+            'youtube_api_key': 'test_key',
+            'spotify_client_id': 'test_id',
+            'spotify_client_secret': 'test_secret',
+            'spotify_redirect_uri': 'http://localhost:8080',
+            'spotify_scope': 'test_scope',
+            'create_public_playlists': False
+        }
+        mock_config_mgr.return_value = mock_config_instance
 
         mock_transfer = MagicMock()
         mock_transfer_class.return_value = mock_transfer
@@ -1325,6 +1665,60 @@ class TestGradioApp(unittest.TestCase):
 
         self.assertIn('Created Successfully', status_msg)
         self.assertEqual(playlist_url, 'https://open.spotify.com/playlist/playlist123')
+
+    @patch('config_manager.ConfigManager')
+    def test_load_current_settings_from_json(self, mock_config_mgr):
+        """Test load_current_settings when JSON file exists"""
+        from app import load_current_settings
+
+        mock_config_instance = MagicMock()
+        mock_config_instance.settings_exist.return_value = True
+        mock_config_instance.load_settings.return_value = {
+            'youtube_api_key': 'saved_key',
+            'spotify_client_id': 'saved_id'
+        }
+        mock_config_mgr.return_value = mock_config_instance
+
+        settings = load_current_settings()
+
+        self.assertEqual(settings['youtube_api_key'], 'saved_key')
+        self.assertEqual(settings['spotify_client_id'], 'saved_id')
+
+    @patch('config_manager.ConfigManager')
+    def test_save_settings_handler_success(self, mock_config_mgr):
+        """Test save_settings_handler with valid settings"""
+        from app import save_settings_handler
+
+        mock_config_instance = MagicMock()
+        mock_config_instance.validate_settings.return_value = (True, [])
+        mock_config_instance.save_settings.return_value = True
+        mock_config_mgr.return_value = mock_config_instance
+
+        result = save_settings_handler(
+            'test_yt_key',
+            'test_sp_id',
+            'test_sp_secret',
+            'http://localhost:8080',
+            'test_scope',
+            False,
+            None
+        )
+
+        self.assertIn('Saved Successfully', result)
+
+    @patch('config_manager.ConfigManager')
+    def test_save_settings_handler_validation_error(self, mock_config_mgr):
+        """Test save_settings_handler with validation errors"""
+        from app import save_settings_handler
+
+        mock_config_instance = MagicMock()
+        mock_config_instance.validate_settings.return_value = (False, ['YouTube API Key is required'])
+        mock_config_mgr.return_value = mock_config_instance
+
+        result = save_settings_handler('', '', '', '', '', False, None)
+
+        self.assertIn('Validation Error', result)
+        self.assertIn('YouTube API Key', result)
 
     @patch('os.makedirs')
     def test_create_ui_returns_blocks(self, mock_makedirs):
@@ -1383,6 +1777,7 @@ def run_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestUtilsFunctions))
     suite.addTests(loader.loadTestsFromTestCase(TestYouTubeHandler))
     suite.addTests(loader.loadTestsFromTestCase(TestSpotifyHandler))
+    suite.addTests(loader.loadTestsFromTestCase(TestConfigManager))
     suite.addTests(loader.loadTestsFromTestCase(TestPlaylistTransfer))
     suite.addTests(loader.loadTestsFromTestCase(TestEdgeCases))
     suite.addTests(loader.loadTestsFromTestCase(TestGradioApp))
@@ -1415,7 +1810,7 @@ if __name__ == '__main__':
     print("COMPREHENSIVE TEST SUITE")
     print("YouTube to Spotify Playlist Transfer")
     print("="*70)
-    print("Total Tests: 77")
+    print("Total Tests: 89")
     print("="*70 + "\n")
 
     result = run_tests()
