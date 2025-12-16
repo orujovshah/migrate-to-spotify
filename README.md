@@ -25,7 +25,6 @@ Automatically transfer your YouTube playlists to Spotify with intelligent track 
 - ✅ Handles deleted/private videos gracefully
 - ✅ Rate limit handling
 - ✅ OAuth authentication for Spotify
-- ✅ **Comprehensive test suite** - 89 tests covering all functionality
 - ✅ **Python 3.13 compatible**
 
 ## Prerequisites
@@ -116,19 +115,6 @@ The app will automatically open in your default browser at `http://localhost:786
 2. **Step 2** (appears after fetching): Review matched tracks in the interactive table → Uncheck any you don't want
 3. **Step 3**: (Optional) Upload cover image, customize name and description
 4. **Step 4**: Click "Create Spotify Playlist"
-
-**Features:**
-- **Settings UI**: Configure API keys directly in the interface with persistent storage
-- **Progressive UI**: Step 2 only appears after tracks are successfully fetched
-- **Two-step workflow**: Fetch tracks first, then review before creating playlist
-- **Track preview & selection**: Review all matched tracks and uncheck any you don't want
-- **Custom cover images**: Upload your own playlist cover (JPEG/PNG, max 256KB)
-- **Custom descriptions**: Write a personalized description for your playlist
-- **Real-time progress tracking**: See progress for both fetching and creating steps
-- **Statistics dashboard**: View match quality and confidence levels
-- **Visual track table**: Interactive table with confidence indicators
-- **Direct Spotify links**: Click to open your created playlist
-- **Error handling and validation**: Clear error messages and input validation
 
 ### Command Line Interface
 
@@ -231,28 +217,6 @@ Each transfer creates a single timestamped log file in the `logs/` directory:
 - One log file per operation (whether using Web UI or CLI)
 - The logs directory is automatically created when the app runs
 
-## Testing
-
-The project includes a comprehensive test suite with 89 tests covering all functionality.
-
-### Run All Tests
-
-```bash
-python test_all_functionality.py
-```
-
-### Test Coverage
-
-- **28 tests** - Utility functions (title parsing, cleaning, matching)
-- **7 tests** - YouTube API handler
-- **14 tests** - Spotify API handler (including cover image upload)
-- **6 tests** - Playlist transfer logic
-- **7 tests** - Edge cases
-- **15 tests** - Web UI and CLI functionality (two-step workflow, track selection, cover images, logs directory creation)
-- **12 tests** - Settings UI and configuration management (settings persistence, validation, .app_settings.json)
-
-All tests use mocking, so they run without requiring API credentials and don't consume API quotas.
-
 ## File Structure
 
 ```
@@ -263,7 +227,6 @@ All tests use mocking, so they run without requiring API credentials and don't c
 ├── youtube_handler.py         # YouTube API wrapper
 ├── spotify_handler.py         # Spotify API wrapper
 ├── utils.py                   # Helper functions
-├── test_all_functionality.py  # Comprehensive test suite (89 tests)
 ├── requirements.txt           # Python dependencies
 ├── .app_settings.json         # User settings (created on first save, gitignored)
 ├── .gitignore                 # Git ignore rules
@@ -425,9 +388,6 @@ cd migrate-to-spotify
 
 # Install dependencies
 pip install -r requirements.txt
-
-# Run tests
-python test_all_functionality.py
 ```
 
 ## License
@@ -450,8 +410,7 @@ If you encounter issues:
 1. Check the log file for detailed error messages
 2. Verify your API credentials are correct
 3. Ensure all dependencies are installed
-4. Run the test suite to verify functionality
-5. Check API quotas haven't been exceeded
+4. Check API quotas haven't been exceeded
 
 ---
 
