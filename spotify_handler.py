@@ -69,25 +69,68 @@ class SpotifyHandler:
             logger.error(f"Error searching for '{query}': {e}")
             return []
     
-    def search_track_best_match(self, queries: List[str]) -> Optional[Dict]:
+    def search_track_best_match(
+        self,
+        queries: List[str],
+        youtube_title: str = ""
+    ) -> Optional[Dict]:
         """
-        Try multiple search queries and return first match.
-        
+        Search Spotify with multiple queries and return best match using embeddings.
+
+        Flow:
+            1. Collect top 10-20 results from all queries
+            2. Remove duplicates by track ID
+            3. Use match_by_embeddings() to find best match via cosine similarity
+            4. Return best match above threshold
+
         Args:
             queries: List of search query strings to try
-            
+            youtube_title: Original YouTube video title (for embedding matching)
+
         Returns:
-            Best matching track dictionary or None
+            Best matching track dictionary or None if no match above threshold
         """
+        from utils import match_by_embeddings
+
+        all_candidates = []
+        seen_ids = set()
+
+        # Spotify Search (Top 10-20)
+        # Collect candidates from all query variations
         for query in queries:
-            tracks = self.search_track(query, limit=1)
-            if tracks:
-                logger.debug(f"Found match with query: '{query}'")
-                return tracks[0]
-            
+            tracks = self.search_track(query, limit=10)  # Get top 10 results per query
+
+            # Add unique tracks only (dedup by Spotify track ID)
+            for track in tracks:
+                if track['id'] not in seen_ids:
+                    seen_ids.add(track['id'])
+                    all_candidates.append(track)
+
             # Small delay to avoid rate limiting
             time.sleep(0.1)
-        
+
+        if not all_candidates:
+            logger.debug("No Spotify results found for any query")
+            return None
+
+        # If no title provided, return first result (backward compatibility)
+        if not youtube_title:
+            logger.debug("No YouTube title provided, returning first result")
+            return all_candidates[0]
+
+        # Sentence Embedding + Cosine Similarity + Best Match + Threshold
+        # Delegate to utils.match_by_embeddings()
+        result = match_by_embeddings(
+            youtube_title=youtube_title,
+            spotify_tracks=all_candidates,
+            threshold=0.6
+        )
+
+        if result:
+            best_track, similarity_score = result
+            return best_track
+
+        logger.debug("No match above threshold")
         return None
     
     def get_track_info(self, track_id: str) -> Optional[Dict]:
