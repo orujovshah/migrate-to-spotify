@@ -204,7 +204,7 @@ $RECYCLE.BIN/
 *.tmp
 
 # Test files (if you want to keep tests private)
-# test_*.py
+test_*.py
 
 # Local configuration overrides
 config.local.py
