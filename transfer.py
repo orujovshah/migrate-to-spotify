@@ -5,7 +5,7 @@ Main script to transfer YouTube playlist to Spotify
 import logging
 import sys
 import os
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 from datetime import datetime
 
 # Import our modules
@@ -17,33 +17,47 @@ from utils import (
     format_track_info,
     extract_playlist_id
 )
-import config
-
 logger = logging.getLogger(__name__)
 
 
 class PlaylistTransfer:
     """Main class to handle YouTube to Spotify playlist transfer"""
-    
-    def __init__(self):
-        """Initialize YouTube and Spotify handlers"""
+
+    def __init__(
+        self,
+        youtube_api_key: str,
+        spotify_client_id: str,
+        spotify_client_secret: str,
+        spotify_redirect_uri: str,
+        spotify_scope: str
+    ):
+        """
+        Initialize YouTube and Spotify handlers with explicit credentials
+
+        Args:
+            youtube_api_key: YouTube Data API key (required)
+            spotify_client_id: Spotify OAuth client ID (required)
+            spotify_client_secret: Spotify OAuth client secret (required)
+            spotify_redirect_uri: Spotify OAuth redirect URI (required)
+            spotify_scope: Spotify API scopes (required)
+        """
         logger.info("Initializing playlist transfer...")
-        
+
         # Initialize YouTube handler
         try:
-            self.youtube = YouTubeHandler(config.YOUTUBE_API_KEY)
+            self.youtube = YouTubeHandler(youtube_api_key)
             logger.info("✓ YouTube API initialized")
         except Exception as e:
             logger.error(f"✗ Failed to initialize YouTube API: {e}")
             raise
-        
+
         # Initialize Spotify handler
         try:
             self.spotify = SpotifyHandler(
-                client_id=config.SPOTIFY_CLIENT_ID,
-                client_secret=config.SPOTIFY_CLIENT_SECRET,
-                redirect_uri=config.SPOTIFY_REDIRECT_URI,
-                scope=config.SPOTIFY_SCOPE
+                client_id=spotify_client_id,
+                client_secret=spotify_client_secret,
+                redirect_uri=spotify_redirect_uri,
+                scope=spotify_scope
             )
             user = self.spotify.get_current_user()
             logger.info(f"✓ Spotify API initialized (User: {user['display_name']})")
@@ -76,7 +90,7 @@ class PlaylistTransfer:
         # Get videos
         videos = self.youtube.get_playlist_videos(
             playlist_id,
-            max_results=config.MAX_VIDEOS
+            max_results=None  # No limit
         )
         
         logger.info(f"✓ Found {len(videos)} videos")
@@ -173,7 +187,7 @@ class PlaylistTransfer:
         playlist_id = self.spotify.create_playlist(
             name=playlist_name,
             description=description,
-            public=config.CREATE_PUBLIC_PLAYLISTS
+            public=False  # Private by default
         )
         
         if not playlist_id:
@@ -268,7 +282,23 @@ def main():
     print("\n" + "="*60)
     print("YouTube to Spotify Playlist Transfer")
     print("="*60 + "\n")
-    
+
+    # Check for saved settings
+    from config_manager import ConfigManager
+
+    config_mgr = ConfigManager()
+    settings = config_mgr.get_settings()
+
+    if settings is None:
+        print("❌ Error: API keys not configured.")
+        print("\nPlease configure your API keys using one of these methods:")
+        print("1. Run the web UI: python3 app.py")
+        print("   Then configure settings in the Settings section")
+        print("2. Manually create .app_settings.json with your credentials\n")
+        sys.exit(1)
+
+    print("✓ Using configuration from .app_settings.json\n")
+
     # Get YouTube playlist URL from user
     youtube_url = input("Enter YouTube playlist URL or ID: ").strip()
     
@@ -290,7 +320,15 @@ def main():
     
     # Perform transfer
     try:
-        transfer = PlaylistTransfer()
+        # Initialize with settings
+        transfer = PlaylistTransfer(
+            youtube_api_key=settings['youtube_api_key'],
+            spotify_client_id=settings['spotify_client_id'],
+            spotify_client_secret=settings['spotify_client_secret'],
+            spotify_redirect_uri=settings['spotify_redirect_uri'],
+            spotify_scope=settings['spotify_scope']
+        )
+
         playlist_url = transfer.transfer(
             youtube_playlist_url=youtube_url,
             spotify_playlist_name=spotify_name,
