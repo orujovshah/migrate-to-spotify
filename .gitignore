@@ -2,6 +2,7 @@
 # NEVER commit these files - they contain API keys and credentials
 config_personal.py
 .spotify_cache
+.app_settings.json
 
 # ==================== PYTHON ====================
 # Byte-compiled / optimized / DLL files
