@@ -47,20 +47,45 @@ def fetch_tracks(
                 "❌ Error: Please enter a YouTube playlist URL or ID",
                 [],
                 {},
-                ""
+                "",
+                gr.update(visible=False)
             )
 
         progress(0.1, desc="Initializing...")
 
-        # Initialize transfer
-        try:
-            transfer = PlaylistTransfer()
-        except Exception as e:
+        # Load configuration
+        from config_manager import ConfigManager
+        config_mgr = ConfigManager()
+        settings = config_mgr.get_settings()
+
+        # Check if settings exist
+        if settings is None:
             return (
-                f"❌ Error: Failed to initialize. Please check your API credentials in config.py\n\nDetails: {str(e)}",
+                "❌ Error: API keys not configured.\n\n"
+                "Please configure your YouTube and Spotify API keys in the Settings section above before fetching tracks.",
                 [],
                 {},
-                ""
+                "",
+                gr.update(visible=False)
+            )
+
+        # Initialize transfer with settings
+        try:
+            transfer = PlaylistTransfer(
+                youtube_api_key=settings['youtube_api_key'],
+                spotify_client_id=settings['spotify_client_id'],
+                spotify_client_secret=settings['spotify_client_secret'],
+                spotify_redirect_uri=settings['spotify_redirect_uri'],
+                spotify_scope=settings['spotify_scope']
+            )
+        except Exception as e:
+            return (
+                f"❌ Error: Failed to initialize with provided settings.\n\n"
+                f"Please check your API credentials in Settings.\n\nDetails: {str(e)}",
+                [],
+                {},
+                "",
+                gr.update(visible=False)
             )
 
         progress(0.2, desc="Fetching YouTube playlist...")
@@ -76,7 +101,8 @@ def fetch_tracks(
                 f"❌ Error: Could not fetch YouTube playlist\n\nDetails: {str(e)}",
                 [],
                 {},
-                ""
+                "",
+                gr.update(visible=False)
             )
 
         if not videos:
@@ -84,7 +110,8 @@ def fetch_tracks(
                 "❌ Error: No videos found in playlist",
                 [],
                 {},
-                ""
+                "",
+                gr.update(visible=False)
             )
 
         progress(0.4, desc=f"Found {len(videos)} videos. Matching tracks on Spotify...")
@@ -156,7 +183,7 @@ def fetch_tracks(
 5. Click "Create Spotify Playlist"
 """
 
-        return (status_msg, tracks_data, state_data, stats)
+        return (status_msg, tracks_data, state_data, stats, gr.update(visible=True))
 
     except Exception as e:
         logger.exception("Unexpected error during fetch")
@@ -164,7 +191,8 @@ def fetch_tracks(
             f"❌ Unexpected Error: {str(e)}\n\nPlease check the log file for details.",
             [],
             {},
-            ""
+            "",
+            gr.update(visible=False)
         )
 
 
@@ -191,8 +219,26 @@ def create_playlist(
 
         progress(0.1, desc="Initializing...")
 
-        # Initialize transfer
-        transfer = PlaylistTransfer()
+        # Load configuration
+        from config_manager import ConfigManager
+        config_mgr = ConfigManager()
+        settings = config_mgr.get_settings()
+
+        # Check if settings exist
+        if settings is None:
+            return (
+                "❌ Error: API keys not configured. Please configure in Settings first.",
+                ""
+            )
+
+        # Initialize transfer with settings
+        transfer = PlaylistTransfer(
+            youtube_api_key=settings['youtube_api_key'],
+            spotify_client_id=settings['spotify_client_id'],
+            spotify_client_secret=settings['spotify_client_secret'],
+            spotify_redirect_uri=settings['spotify_redirect_uri'],
+            spotify_scope=settings['spotify_scope']
+        )
 
         # Get selected tracks from dataframe
         selected_indices = []
@@ -250,11 +296,10 @@ def create_playlist(
 
         # Create playlist
         try:
-            import config
             playlist_id = transfer.spotify.create_playlist(
                 name=spotify_name,
                 description=description,
-                public=config.CREATE_PUBLIC_PLAYLISTS
+                public=settings.get('create_public_playlists', False)
             )
 
             if not playlist_id:
@@ -326,6 +371,108 @@ def create_playlist(
         )
 
 
+def load_current_settings() -> Dict:
+    """
+    Load current settings for display in UI
+
+    Returns:
+        Dictionary with current configuration values
+    """
+    from config_manager import ConfigManager
+
+    config_mgr = ConfigManager()
+    if config_mgr.settings_exist():
+        try:
+            return config_mgr.load_settings()
+        except Exception:
+            pass
+
+    # Return empty/default values for new users
+    return {
+        'youtube_api_key': '',
+        'spotify_client_id': '',
+        'spotify_client_secret': '',
+        'spotify_redirect_uri': 'http://127.0.0.1:8080/callback',
+        'spotify_scope': 'playlist-modify-public playlist-modify-private ugc-image-upload',
+        'create_public_playlists': False,
+        'max_videos': None
+    }
+
+
+def save_settings_handler(
+    youtube_api_key: str,
+    spotify_client_id: str,
+    spotify_client_secret: str,
+    spotify_redirect_uri: str,
+    spotify_scope: str,
+    create_public_playlists: bool,
+    max_videos: Optional[float]
+) -> str:
+    """
+    Save settings and return status message
+
+    Args:
+        youtube_api_key: YouTube Data API key
+        spotify_client_id: Spotify OAuth client ID
+        spotify_client_secret: Spotify OAuth client secret
+        spotify_redirect_uri: Spotify OAuth redirect URI
+        spotify_scope: Spotify API scopes
+        create_public_playlists: Whether to create public playlists by default
+        max_videos: Maximum videos to process (None for unlimited)
+
+    Returns:
+        Status message (success or error)
+    """
+    from config_manager import ConfigManager
+    from datetime import datetime
+
+    config_mgr = ConfigManager()
+
+    # Build settings dictionary
+    settings = {
+        'youtube_api_key': youtube_api_key.strip() if youtube_api_key else '',
+        'spotify_client_id': spotify_client_id.strip() if spotify_client_id else '',
+        'spotify_client_secret': spotify_client_secret.strip() if spotify_client_secret else '',
+        'spotify_redirect_uri': spotify_redirect_uri.strip() if spotify_redirect_uri else 'http://127.0.0.1:8080/callback',
+        'spotify_scope': spotify_scope.strip() if spotify_scope else 'playlist-modify-public playlist-modify-private ugc-image-upload',
+        'create_public_playlists': create_public_playlists,
+        'max_videos': int(max_videos) if max_videos and max_videos > 0 else None,
+        'last_updated': datetime.now().isoformat()
+    }
+
+    # Validate
+    is_valid, errors = config_mgr.validate_settings(settings)
+    if not is_valid:
+        error_msg = "❌ **Validation Error**\n\n**Please fix the following issues:**\n\n"
+        error_msg += "\n".join(f"- {error}" for error in errors)
+        return error_msg
+
+    # Save
+    success = config_mgr.save_settings(settings)
+    if success:
+        return """
+### ✅ Settings Saved Successfully!
+
+Your API credentials have been saved to `.app_settings.json`.
+
+**What's next:**
+- These settings will be used automatically for all future transfers
+- You can now fetch and create playlists using the saved credentials
+- The CLI (`transfer.py`) will also offer to use these settings
+
+**Security Note:** The settings file is protected in `.gitignore` and will not be committed to version control.
+"""
+    else:
+        return """
+❌ **Error: Failed to save settings**
+
+Please check:
+- File permissions in the project directory
+- Disk space availability
+- Try running the app with appropriate permissions
+"""
+
+
 def create_ui():
     """Create and configure Gradio interface"""
 
@@ -367,6 +514,94 @@ def create_ui():
 
         # State to store matched tracks between steps
         state = gr.State({})
+
+        # Settings Section
+        gr.Markdown("## ⚙️ Settings & Configuration")
+
+        with gr.Accordion("API Configuration", open=False):
+            gr.Markdown("""
+### Configure Your API Credentials
+
+Settings are saved locally and will be used for all future transfers.
+
+**Need API keys?** Follow these guides:
+- **YouTube Data API Key**: [Get it from Google Cloud Console →](https://console.cloud.google.com/apis/credentials)
+- **Spotify Application**: [Create one on Spotify Dashboard →](https://developer.spotify.com/dashboard)
+            """)
+
+            with gr.Row():
+                with gr.Column():
+                    gr.Markdown("#### YouTube API")
+                    youtube_api_key_input = gr.Textbox(
+                        label="YouTube API Key",
+                        type="password",
+                        placeholder="AIzaSy...",
+                        info="Required for fetching YouTube playlists"
+                    )
+                    gr.Markdown("""
+**How to get YouTube API Key:**
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Create a new project (or select existing one)
+3. Enable **YouTube Data API v3** in APIs & Services → Library
+4. Go to Credentials → Create Credentials → API Key
+5. Copy the API key and paste it above
+                    """)
+
+                with gr.Column():
+                    gr.Markdown("#### Spotify API")
+                    spotify_client_id_input = gr.Textbox(
+                        label="Spotify Client ID",
+                        placeholder="abc123...",
+                        info="From your Spotify Developer app"
+                    )
+                    spotify_client_secret_input = gr.Textbox(
+                        label="Spotify Client Secret",
+                        type="password",
+                        placeholder="xyz789...",
+                        info="Keep this secret!"
+                    )
+                    gr.Markdown("""
+**How to get Spotify Credentials:**
+1. Go to [Spotify Developer Dashboard](https://developer.spotify.com/dashboard)
+2. Log in with your Spotify account
+3. Click **Create an App**
+4. Fill in any name/description
+5. Copy the **Client ID** and **Client Secret**
+6. In app settings, add this Redirect URI: `http://127.0.0.1:8080/callback`
+                    """)
+
+            with gr.Row():
+                with gr.Column():
+                    gr.Markdown("#### Advanced Settings")
+                    spotify_redirect_uri_input = gr.Textbox(
+                        label="Spotify Redirect URI",
+                        value="http://127.0.0.1:8080/callback",
+                        info="Must match what you set in Spotify app settings"
+                    )
+                    spotify_scope_input = gr.Textbox(
+                        label="Spotify API Scopes",
+                        value="playlist-modify-public playlist-modify-private ugc-image-upload",
+                        info="OAuth permissions (keep default unless you know what you're doing)"
+                    )
+
+                with gr.Column():
+                    gr.Markdown("#### Playlist Options")
+                    create_public_input = gr.Checkbox(
+                        label="Create Public Playlists by Default",
+                        value=False,
+                        info="Uncheck for private playlists"
+                    )
+                    max_videos_input = gr.Number(
+                        label="Maximum Videos to Process",
+                        value=None,
+                        precision=0,
+                        info="Leave empty for unlimited"
+                    )
+
+            save_settings_btn = gr.Button("💾 Save Settings", variant="primary", size="lg")
+            settings_status = gr.Markdown()
+
+        gr.Markdown("---")
 
         # Step 1: Fetch Tracks
         gr.Markdown("## Step 1: Fetch Tracks from YouTube")
@@ -419,16 +654,17 @@ def create_ui():
         gr.Markdown("---")
 
         # Step 2: Review and Select Tracks
-        gr.Markdown("## Step 2: Review & Select Tracks")
+        with gr.Column(visible=False) as step2_section:
+            gr.Markdown("## Step 2: Review & Select Tracks")
 
-        tracks_table = gr.Dataframe(
-            headers=["Include", "YouTube Title", "Spotify Match", "Confidence"],
-            datatype=["bool", "str", "str", "str"],
-            col_count=(4, "fixed"),
-            interactive=True,
-            wrap=True,
-            label="Matched Tracks (uncheck any you don't want)"
-        )
+            tracks_table = gr.Dataframe(
+                headers=["Include", "YouTube Title", "Spotify Match", "Confidence"],
+                datatype=["bool", "str", "str", "str"],
+                col_count=(4, "fixed"),
+                interactive=True,
+                wrap=True,
+                label="Matched Tracks (uncheck any you don't want)"
+            )
 
         gr.Markdown("---")
 
@@ -503,7 +739,7 @@ def create_ui():
         fetch_btn.click(
             fn=fetch_tracks,
             inputs=[youtube_input, include_low_conf],
-            outputs=[fetch_status, tracks_table, state, fetch_stats],
+            outputs=[fetch_status, tracks_table, state, fetch_stats, step2_section],
         )
 
         # Connect the create button
@@ -511,6 +747,21 @@ def create_ui():
             fn=create_playlist,
             inputs=[spotify_name_input, description_input, cover_image_input, tracks_table, state],
             outputs=[create_status, playlist_url_output],
+        )
+
+        # Connect the save settings button
+        save_settings_btn.click(
+            fn=save_settings_handler,
+            inputs=[
+                youtube_api_key_input,
+                spotify_client_id_input,
+                spotify_client_secret_input,
+                spotify_redirect_uri_input,
+                spotify_scope_input,
+                create_public_input,
+                max_videos_input
+            ],
+            outputs=[settings_status]
         )
 
     return app
@@ -522,17 +773,29 @@ def main():
     print("YouTube to Spotify Playlist Transfer - Web UI")
     print("="*60 + "\n")
 
-    # Check if config is set up
+    # Check for saved settings
     try:
-        import config
-        if config.YOUTUBE_API_KEY == 'your_actual_youtube_api_key_here' or \
-           config.SPOTIFY_CLIENT_ID == 'your_actual_spotify_client_id_here':
-            print("⚠️  WARNING: API credentials not configured!")
-            print("Please edit config.py with your actual API keys.")
-            print("The app will launch but transfers will fail.\n")
-    except ImportError:
-        print("❌ Error: config.py not found!")
-        print("Please create config.py with your API credentials.\n")
+        from config_manager import ConfigManager
+
+        config_mgr = ConfigManager()
+        if config_mgr.settings_exist():
+            settings = config_mgr.load_settings()
+            is_valid, errors = config_mgr.validate_settings(settings)
+            if is_valid:
+                print("✅ Configuration loaded from saved settings")
+                print("Your API credentials are ready to use.\n")
+            else:
+                print("⚠️  WARNING: Saved settings have validation issues:")
+                for error in errors:
+                    print(f"   - {error}")
+                print("Please update settings in the web interface.\n")
+        else:
+            print("ℹ️  No saved settings found.")
+            print("Configure your API keys in the Settings panel (top of the web interface).")
+            print("Settings will be saved and used automatically for future transfers.\n")
+    except Exception as e:
+        print(f"⚠️  Warning: Error checking configuration: {e}")
+        print("You can configure settings in the web UI.\n")
 
     app = create_ui()
 
