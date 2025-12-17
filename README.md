@@ -11,12 +11,15 @@ Automatically transfer your YouTube playlists to Spotify with **AI-powered seman
 
 ## Features
 
-- ✅ **Semantic Similarity Matching** - AI-powered track matching using sentence transformers (all-mpnet-base-v2)
+- ✅ **Semantic Similarity Matching** - AI-powered track matching with 5 model options (from 60MB to 420MB)
+- ✅ **Multiple Model Support** - Choose from 5 semantic matching models or string-only mode
 - ✅ **Web UI Interface** - Beautiful browser-based interface with 4-step workflow
-- ✅ **Settings UI** - Configure API keys directly in the web interface with persistent storage
+- ✅ **Settings UI** - Configure API keys and model selection directly in the web interface
 - ✅ **Track Preview & Selection** - Review and remove tracks before creating playlist
+- ✅ **Per-Playlist Visibility Control** - Set public/private per playlist, overriding global defaults
 - ✅ **Custom Cover Images** - Upload your own playlist cover art (JPEG, 4KB-256KB)
 - ✅ **Custom Descriptions** - Write personalized playlist descriptions
+- ✅ **Graceful Exit** - Exit the application cleanly from the UI
 - ✅ **CLI Interface** - Interactive command-line tool
 - ✅ **Batch Processing** - Handle playlists with 100+ tracks efficiently
 - ✅ Intelligent title parsing and matching
@@ -27,7 +30,7 @@ Automatically transfer your YouTube playlists to Spotify with **AI-powered seman
 - ✅ Rate limit handling with automatic delays
 - ✅ OAuth authentication for Spotify
 - ✅ **Python 3.13 compatible**
-- ✅ **Comprehensive test suite** - 143+ tests covering all functionality
+- ✅ **Comprehensive test suite** - 156+ tests covering all functionality
 
 ## Prerequisites
 
@@ -110,16 +113,19 @@ The app will automatically open in your default browser at `http://localhost:786
 **First-Time Setup:**
 1. Click "⚙️ Settings" to configure your API keys
 2. Enter your YouTube and Spotify credentials
-3. Click "Save Settings"
-4. (Optional) Check "🤖 Semantic Matching Model Status" to verify model download status
+3. (Optional) Select your preferred semantic matching model (5 options: 60MB to 420MB, or string-only mode)
+4. Click "Save Settings"
+5. (Optional) Check "🤖 Semantic Matching Model Status" to verify model download status
 
 **Workflow:**
 1. **Step 1**: Enter YouTube playlist URL → Click "Fetch Tracks"
-   - First use: Semantic matching model downloads automatically (~420MB, one-time)
+   - First use: Semantic matching model downloads automatically (60MB-420MB depending on model selected, one-time)
    - Subsequent uses: Model loads from cache instantly
 2. **Step 2** (appears after fetching): Review matched tracks in the interactive table → Uncheck any you don't want
 3. **Step 3**: (Optional) Upload cover image, customize name and description
+   - (Optional) Check "🌐 Make this playlist public" to override the default visibility setting
 4. **Step 4**: Click "Create Spotify Playlist"
+5. **Exit**: Click "❌ Exit App" button to gracefully close the application
 
 ### Command Line Interface
 
@@ -212,12 +218,14 @@ The script uses an advanced multi-stage matching pipeline for optimal accuracy:
 ### Stage 3: AI-Powered Matching
 
 4. **Semantic Similarity Matching**: Uses sentence transformers for intelligent matching
-   - **Model**: all-mpnet-base-v2 (sentence-transformers)
+   - **Model Options**: 5 models available (paraphrase-MiniLM-L3-v2, all-MiniLM-L6-v2, all-MiniLM-L12-v2, all-mpnet-base-v2) or string-only mode
+   - **Default Model**: all-mpnet-base-v2 (highest accuracy, ~420MB)
+   - **Lightweight Models**: MiniLM variants available (60MB-120MB) for faster downloads and matching
    - **Method**: Encodes YouTube title and Spotify tracks into embeddings
    - **Comparison**: Computes cosine similarity between embeddings
    - **Threshold**: Matches above 0.6 similarity score
    - **Fallback**: Uses string similarity if model unavailable
-   - **Auto-download**: Model downloads automatically on first use (~420MB, one-time)
+   - **Auto-download**: Model downloads automatically on first use (size depends on selected model)
 
 5. **Confidence Scoring**: Verifies match quality
    - Semantic similarity score (0.0 to 1.0)
@@ -279,9 +287,16 @@ This project is fully compatible with Python 3.13. The required dependencies inc
 All dependencies are automatically installed via `requirements.txt`.
 
 **First-Time Model Download:**
-- The semantic matching model (~420MB) downloads automatically on first use
+- The semantic matching model downloads automatically on first use
+- Model size depends on your selection (60MB-420MB, or no download for string-only mode)
 - One-time download, cached locally for future use
 - Download happens in the background when you fetch tracks
+- **Model Options:**
+  - `paraphrase-MiniLM-L3-v2` - Lightweight (~60MB), fast matching with decent accuracy
+  - `all-MiniLM-L6-v2` - Balanced (~80MB), fast matching with good accuracy
+  - `all-MiniLM-L12-v2` - Enhanced (~120MB), balanced performance with very good accuracy
+  - `all-mpnet-base-v2` - Advanced (~420MB, default), best matching accuracy
+  - `string_only` - No download required, basic text similarity matching
 
 </details>
 
@@ -389,8 +404,9 @@ pip install --upgrade gradio
 - Spotify may not have all songs (regional restrictions, unavailable tracks)
 - Title parsing depends on consistent YouTube title formatting
 - Deleted or private YouTube videos are skipped
-- First-time use requires ~420MB download for the semantic matching model (one-time)
-- Model requires ~500MB RAM when loaded (CPU version)
+- First-time use requires model download (60MB-420MB depending on selected model, one-time)
+- Model requires RAM when loaded (60MB-500MB depending on selected model, CPU version)
+- String-only mode has no download but lower accuracy than semantic models
 
 </details>
 
