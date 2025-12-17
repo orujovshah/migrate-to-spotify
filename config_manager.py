@@ -12,6 +12,15 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+# Valid embedding model options
+VALID_MODELS = [
+    'string_only',  # No model, use string matching only
+    'paraphrase-MiniLM-L3-v2',  # ~60MB, very fast, decent accuracy
+    'all-MiniLM-L6-v2',  # ~80MB, fast, good accuracy
+    'all-MiniLM-L12-v2',  # ~120MB, balanced, very good accuracy
+    'all-mpnet-base-v2'  # ~420MB, slower, best accuracy (default)
+]
+
 
 class ConfigManager:
     """Manages application configuration with persistent JSON storage"""
@@ -134,6 +143,11 @@ class ConfigManager:
         if 'create_public_playlists' in settings:
             if not isinstance(settings['create_public_playlists'], bool):
                 errors.append("Create public playlists must be true or false")
+
+        # Validate embedding model
+        if 'embedding_model' in settings:
+            if settings['embedding_model'] not in VALID_MODELS:
+                errors.append(f"Invalid embedding model. Must be one of: {', '.join(VALID_MODELS)}")
 
         return (len(errors) == 0, errors)
 
