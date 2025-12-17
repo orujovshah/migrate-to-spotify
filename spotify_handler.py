@@ -133,22 +133,6 @@ class SpotifyHandler:
         logger.debug("No match above threshold")
         return None
     
-    def get_track_info(self, track_id: str) -> Optional[Dict]:
-        """
-        Get detailed track information.
-        
-        Args:
-            track_id: Spotify track ID
-            
-        Returns:
-            Track dictionary or None
-        """
-        try:
-            return self.sp.track(track_id)
-        except Exception as e:
-            logger.error(f"Error fetching track {track_id}: {e}")
-            return None
-    
     def create_playlist(self, name: str, description: str = '', public: bool = False) -> Optional[str]:
         """
         Create a new Spotify playlist.
@@ -215,29 +199,6 @@ class SpotifyHandler:
         """
         return f"https://open.spotify.com/playlist/{playlist_id}"
     
-    def playlist_exists(self, name: str) -> Optional[str]:
-        """
-        Check if a playlist with given name exists for current user.
-
-        Args:
-            name: Playlist name to search for
-
-        Returns:
-            Playlist ID if exists, None otherwise
-        """
-        try:
-            user_id = self.sp.current_user()['id']
-            playlists = self.sp.user_playlists(user_id)
-
-            for playlist in playlists['items']:
-                if playlist['name'].lower() == name.lower():
-                    return playlist['id']
-
-            return None
-        except Exception as e:
-            logger.error(f"Error checking playlist existence: {e}")
-            return None
-
     def upload_playlist_cover(self, playlist_id: str, image_path: str) -> bool:
         """
         Upload cover image to a Spotify playlist.
