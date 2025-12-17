@@ -115,25 +115,3 @@ class YouTubeHandler:
             logger.error(f"Error fetching playlist videos: {e}")
             raise
     
-    def get_video_details(self, video_ids: List[str]) -> List[Dict]:
-        """
-        Get detailed information for multiple videos.
-        Useful for getting duration, tags, etc.
-        
-        Args:
-            video_ids: List of YouTube video IDs (max 50 per call)
-            
-        Returns:
-            List of video detail dictionaries
-        """
-        try:
-            request = self.youtube.videos().list(
-                part='snippet,contentDetails',
-                id=','.join(video_ids)
-            )
-            response = request.execute()
-            return response.get('items', [])
-            
-        except HttpError as e:
-            logger.error(f"Error fetching video details: {e}")
-            return []
