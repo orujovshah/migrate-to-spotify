@@ -19,31 +19,42 @@ class EmbeddingMatcher:
     """
     _instance = None
     _model = None
+    _model_name = None  # Track which model to load
 
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
 
+    def set_model_name(self, model_name: str):
+        """Set the model name to use (call before first access)"""
+        self._model_name = model_name
+
     @property
     def model(self) -> Optional[SentenceTransformer]:
         """Lazy load the model on first access"""
         if self._model is None:
+            # Check if string-only mode
+            model_name = self._model_name or 'all-mpnet-base-v2'
+            if model_name == 'string_only':
+                logger.info("Using string matching only (no model download)")
+                return None
+
             try:
-                was_downloaded = self.is_model_downloaded()
+                was_downloaded = self.is_model_downloaded(model_name)
 
                 if not was_downloaded:
-                    logger.info("Downloading sentence transformer model (all-mpnet-base-v2)...")
-                    logger.info("This is a one-time download (~420MB). Please wait...")
+                    logger.info(f"Downloading sentence transformer model ({model_name})...")
+                    logger.info("This is a one-time download. Please wait...")
                 else:
-                    logger.info("Loading sentence transformer model (all-mpnet-base-v2)...")
+                    logger.info(f"Loading sentence transformer model ({model_name})...")
 
-                self._model = SentenceTransformer('all-mpnet-base-v2')
+                self._model = SentenceTransformer(model_name)
 
                 if not was_downloaded:
-                    logger.info("✓ Model downloaded and loaded successfully")
+                    logger.info(f"✓ Model {model_name} downloaded and loaded successfully")
                 else:
-                    logger.info("✓ Model loaded successfully")
+                    logger.info(f"✓ Model {model_name} loaded successfully")
 
             except Exception as e:
                 logger.error(f"Failed to load embedding model: {e}")
@@ -61,9 +72,12 @@ class EmbeddingMatcher:
             logger.error(f"Failed to encode text: {e}")
             return None
 
-    def is_model_downloaded(self) -> bool:
+    def is_model_downloaded(self, model_name: str) -> bool:
         """
         Check if model is already downloaded to disk cache.
+
+        Args:
+            model_name: Name of the sentence transformer model
 
         Returns:
             True if model exists in cache, False otherwise
@@ -71,17 +85,75 @@ class EmbeddingMatcher:
         import os
         from pathlib import Path
 
+        # Special case: string_only has no model
+        if model_name == 'string_only':
+            return True
+
         # Check Hugging Face cache (primary location for newer versions)
-        hf_cache = Path.home() / '.cache' / 'huggingface' / 'hub' / 'models--sentence-transformers--all-mpnet-base-v2'
+        safe_model_name = model_name.replace('/', '--')
+        hf_cache = Path.home() / '.cache' / 'huggingface' / 'hub' / f'models--sentence-transformers--{safe_model_name}'
         if hf_cache.exists() and hf_cache.is_dir():
             return True
 
         # Check legacy torch cache location (fallback)
-        torch_cache = Path.home() / '.cache' / 'torch' / 'sentence_transformers' / 'sentence-transformers_all-mpnet-base-v2'
+        torch_cache = Path.home() / '.cache' / 'torch' / 'sentence_transformers' / f'sentence-transformers_{safe_model_name}'
         if torch_cache.exists() and torch_cache.is_dir():
             return True
 
         return False
+
+    def delete_model(self, model_name: str) -> tuple:
+        """
+        Delete a downloaded model from disk cache.
+
+        Args:
+            model_name: Name of the sentence transformer model
+
+        Returns:
+            Tuple of (success: bool, message: str)
+        """
+        import shutil
+        from pathlib import Path
+
+        # Special case: string_only has no model
+        if model_name == 'string_only':
+            return (False, "String-only mode has no model to delete")
+
+        # Clear in-memory model if it's currently loaded
+        if self._model is not None and self._model_name == model_name:
+            self._model = None
+            logger.info(f"Cleared in-memory model: {model_name}")
+
+        deleted_locations = []
+        safe_model_name = model_name.replace('/', '--')
+
+        # Delete from Hugging Face cache
+        hf_cache = Path.home() / '.cache' / 'huggingface' / 'hub' / f'models--sentence-transformers--{safe_model_name}'
+        if hf_cache.exists() and hf_cache.is_dir():
+            try:
+                shutil.rmtree(hf_cache)
+                deleted_locations.append("HuggingFace cache")
+                logger.info(f"Deleted model from HuggingFace cache: {hf_cache}")
+            except Exception as e:
+                logger.error(f"Failed to delete from HuggingFace cache: {e}")
+                return (False, f"Failed to delete from HuggingFace cache: {str(e)}")
+
+        # Delete from legacy torch cache
+        torch_cache = Path.home() / '.cache' / 'torch' / 'sentence_transformers' / f'sentence-transformers_{safe_model_name}'
+        if torch_cache.exists() and torch_cache.is_dir():
+            try:
+                shutil.rmtree(torch_cache)
+                deleted_locations.append("Torch cache")
+                logger.info(f"Deleted model from Torch cache: {torch_cache}")
+            except Exception as e:
+                logger.error(f"Failed to delete from Torch cache: {e}")
+                return (False, f"Failed to delete from Torch cache: {str(e)}")
+
+        if deleted_locations:
+            locations_str = " and ".join(deleted_locations)
+            return (True, f"Model deleted successfully from {locations_str}")
+        else:
+            return (False, "Model not found in cache (already deleted or never downloaded)")
 
     def get_model_status(self) -> str:
         """
@@ -90,12 +162,17 @@ class EmbeddingMatcher:
         Returns:
             Status string describing model state
         """
+        model_name = self._model_name or 'all-mpnet-base-v2'
+
+        if model_name == 'string_only':
+            return "String matching only (no model)"
+
         if self._model is not None:
-            return "Downloaded ✓ (Loaded in memory)"
-        elif self.is_model_downloaded():
-            return "Downloaded ✓ (Ready to load)"
+            return f"✓ {model_name} - Downloaded and loaded"
+        elif self.is_model_downloaded(model_name):
+            return f"✓ {model_name} - Downloaded (ready to load)"
         else:
-            return "Not downloaded (will download on first use)"
+            return f"⬇ {model_name} - Not downloaded (will download on first use)"
 
 
 # Global instance
