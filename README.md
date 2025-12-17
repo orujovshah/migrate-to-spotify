@@ -5,27 +5,29 @@
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![GitLab](https://img.shields.io/badge/gitlab-migrate--to--spotify-orange.svg)](https://gitlab.com/orujovshahmurad/migrate-to-spotify)
 
-Automatically transfer your YouTube playlists to Spotify with intelligent track matching. Features both a command-line interface and a beautiful web UI.
+Automatically transfer your YouTube playlists to Spotify with **AI-powered semantic matching**. Uses sentence transformers for intelligent track matching with higher accuracy than traditional text-based methods. Features both a command-line interface and a beautiful web UI.
 
 **🔗 Repository:** [gitlab.com/orujovshahmurad/migrate-to-spotify](https://gitlab.com/orujovshahmurad/migrate-to-spotify)
 
 ## Features
 
+- ✅ **Semantic Similarity Matching** - AI-powered track matching using sentence transformers (all-mpnet-base-v2)
 - ✅ **Web UI Interface** - Beautiful browser-based interface with 4-step workflow
 - ✅ **Settings UI** - Configure API keys directly in the web interface with persistent storage
 - ✅ **Track Preview & Selection** - Review and remove tracks before creating playlist
-- ✅ **Custom Cover Images** - Upload your own playlist cover art
+- ✅ **Custom Cover Images** - Upload your own playlist cover art (JPEG, 4KB-256KB)
 - ✅ **Custom Descriptions** - Write personalized playlist descriptions
 - ✅ **CLI Interface** - Interactive command-line tool
-- ✅ Batch transfer entire YouTube playlists to Spotify
+- ✅ **Batch Processing** - Handle playlists with 100+ tracks efficiently
 - ✅ Intelligent title parsing and matching
 - ✅ Multiple search query strategies for better matches
 - ✅ Confidence scoring for match quality
 - ✅ Detailed logging of transfer process
 - ✅ Handles deleted/private videos gracefully
-- ✅ Rate limit handling
+- ✅ Rate limit handling with automatic delays
 - ✅ OAuth authentication for Spotify
 - ✅ **Python 3.13 compatible**
+- ✅ **Comprehensive test suite** - 143+ tests covering all functionality
 
 ## Prerequisites
 
@@ -109,9 +111,12 @@ The app will automatically open in your default browser at `http://localhost:786
 1. Click "⚙️ Settings" to configure your API keys
 2. Enter your YouTube and Spotify credentials
 3. Click "Save Settings"
+4. (Optional) Check "🤖 Semantic Matching Model Status" to verify model download status
 
 **Workflow:**
 1. **Step 1**: Enter YouTube playlist URL → Click "Fetch Tracks"
+   - First use: Semantic matching model downloads automatically (~420MB, one-time)
+   - Subsequent uses: Model loads from cache instantly
 2. **Step 2** (appears after fetching): Review matched tracks in the interactive table → Uncheck any you don't want
 3. **Step 3**: (Optional) Upload cover image, customize name and description
 4. **Step 4**: Click "Create Spotify Playlist"
@@ -180,28 +185,50 @@ Playlist ID only:
 PLxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
-## How Track Matching Works
+<details>
+<summary><h2>📊 How Track Matching Works</h2></summary>
 
-The script uses multiple strategies to find the best match:
+The script uses an advanced multi-stage matching pipeline for optimal accuracy:
+
+### Stage 1: Title Preprocessing
 
 1. **Title Parsing**: Extracts artist and song title from YouTube video titles
-   - Formats: "Artist - Song", "Artist: Song", "Song by Artist"
+   - Formats: "Artist - Song", "Artist: Song", "Song by Artist", "Artist \"Song\""
 
 2. **Title Cleaning**: Removes common YouTube clutter
-   - Keywords: "official video", "lyrics", "HD", etc.
+   - Keywords: "official video", "lyrics", "HD", "4K", "audio", etc.
    - Brackets and parentheses content
+   - Special symbols and normalization
+
+### Stage 2: Spotify Search
 
 3. **Multiple Search Queries**: Tries several query variations
    - Parsed artist + title
    - Spotify advanced syntax (artist:X track:Y)
    - Cleaned full title
    - Original title
+   - Collects top 10-20 candidates from all queries
 
-4. **Confidence Scoring**: Verifies match quality
-   - Compares similarity between YouTube and Spotify titles
-   - Flags low-confidence matches for review
+### Stage 3: AI-Powered Matching
 
-## Understanding Output
+4. **Semantic Similarity Matching**: Uses sentence transformers for intelligent matching
+   - **Model**: all-mpnet-base-v2 (sentence-transformers)
+   - **Method**: Encodes YouTube title and Spotify tracks into embeddings
+   - **Comparison**: Computes cosine similarity between embeddings
+   - **Threshold**: Matches above 0.6 similarity score
+   - **Fallback**: Uses string similarity if model unavailable
+   - **Auto-download**: Model downloads automatically on first use (~420MB, one-time)
+
+5. **Confidence Scoring**: Verifies match quality
+   - Semantic similarity score (0.0 to 1.0)
+   - High confidence: ≥0.6 similarity
+   - Low confidence: Below threshold but possible match
+   - Flags uncertain matches for user review
+
+</details>
+
+<details>
+<summary><h2>📋 Understanding Output</h2></summary>
 
 ### Match Statuses
 
@@ -217,7 +244,10 @@ Each transfer creates a single timestamped log file in the `logs/` directory:
 - One log file per operation (whether using Web UI or CLI)
 - The logs directory is automatically created when the app runs
 
-## File Structure
+</details>
+
+<details>
+<summary><h2>📁 File Structure</h2></summary>
 
 ```
 .
@@ -234,16 +264,29 @@ Each transfer creates a single timestamped log file in the `logs/` directory:
 └── README.md                  # This file
 ```
 
-## Python 3.13 Compatibility
+</details>
+
+<details>
+<summary><h2>🐍 Python 3.13 Compatibility</h2></summary>
 
 This project is fully compatible with Python 3.13. The required dependencies include:
 
 - `audioop-lts` - Provides compatibility for the removed `audioop` module
 - `gradio>=6.1.0` - Latest version with Python 3.13 support
+- `sentence-transformers` - AI model for semantic similarity matching
+- `torch` - Required by sentence-transformers (CPU version)
 
 All dependencies are automatically installed via `requirements.txt`.
 
-## API Rate Limits
+**First-Time Model Download:**
+- The semantic matching model (~420MB) downloads automatically on first use
+- One-time download, cached locally for future use
+- Download happens in the background when you fetch tracks
+
+</details>
+
+<details>
+<summary><h2>⚡ API Rate Limits</h2></summary>
 
 ### YouTube Data API v3
 - **Quota**: 10,000 units/day
@@ -254,7 +297,10 @@ All dependencies are automatically installed via `requirements.txt`.
 - **Rate Limit**: ~180 requests per minute
 - **The script includes delays to stay within limits**
 
-## Troubleshooting
+</details>
+
+<details>
+<summary><h2>🔧 Troubleshooting</h2></summary>
 
 ### "Invalid API Key" Error
 
@@ -297,7 +343,31 @@ pip install audioop-lts
 pip install --upgrade gradio
 ```
 
-## Privacy & Security
+### Semantic Matching Model Issues
+
+**Model Download Stuck:**
+- The model downloads automatically on first track fetch (~420MB)
+- Download time depends on your internet connection (2-5 minutes typical)
+- Progress is logged in the console and UI
+- Model is cached in `~/.cache/huggingface/` or `~/.cache/torch/`
+
+**Model Won't Download:**
+- Check internet connection
+- Ensure you have ~500MB free disk space
+- Try manually downloading:
+  ```bash
+  python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-mpnet-base-v2')"
+  ```
+
+**Fallback Mode:**
+- If the model fails to load, the app automatically falls back to string similarity
+- Matching will still work but with slightly lower accuracy
+- Check logs for "Falling back to string similarity matching"
+
+</details>
+
+<details>
+<summary><h2>🔒 Privacy & Security</h2></summary>
 
 - **Never share** your API credentials
 - **Never commit** `.app_settings.json` to version control
@@ -310,23 +380,40 @@ pip install --upgrade gradio
 - Settings are stored locally in `.app_settings.json` with restrictive file permissions
 - Spotify OAuth is handled securely via official libraries
 
-## Limitations
+</details>
+
+<details>
+<summary><h2>⚠️ Limitations</h2></summary>
 
 - YouTube videos that don't correspond to music tracks won't match
 - Spotify may not have all songs (regional restrictions, unavailable tracks)
 - Title parsing depends on consistent YouTube title formatting
 - Deleted or private YouTube videos are skipped
+- First-time use requires ~420MB download for the semantic matching model (one-time)
+- Model requires ~500MB RAM when loaded (CPU version)
 
-## Advanced Usage
+</details>
+
+<details>
+<summary><h2>🔬 Advanced Usage</h2></summary>
 
 ### Custom Match Verification
 
-Adjust the similarity threshold in `utils.py`:
+Adjust the semantic similarity threshold in `utils.py`:
 
 ```python
 def verify_match(youtube_title: str, spotify_track: dict, threshold: float = 0.6):
-    # Lower threshold = more lenient matching
-    # Higher threshold = stricter matching
+    # Lower threshold (e.g., 0.5) = more lenient matching (more matches, lower quality)
+    # Higher threshold (e.g., 0.7) = stricter matching (fewer matches, higher quality)
+    # Uses cosine similarity between embeddings (0.0 to 1.0)
+```
+
+Or adjust the threshold in `match_by_embeddings()`:
+
+```python
+def match_by_embeddings(youtube_title: str, spotify_tracks: List[dict], threshold: float = 0.6):
+    # Default: 0.6 (balanced accuracy and recall)
+    # Recommended range: 0.5-0.7
 ```
 
 ### Batch Transfer Multiple Playlists
@@ -366,7 +453,10 @@ app.launch(
 
 This creates a temporary public URL that you can share with others.
 
-## Contributing
+</details>
+
+<details>
+<summary><h2>🤝 Contributing</h2></summary>
 
 Contributions are welcome! Feel free to:
 
@@ -390,7 +480,10 @@ cd migrate-to-spotify
 pip install -r requirements.txt
 ```
 
-## License
+</details>
+
+<details>
+<summary><h2>📄 License</h2></summary>
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
@@ -398,19 +491,29 @@ Make sure to comply with:
 - [YouTube API Terms of Service](https://developers.google.com/youtube/terms/api-services-terms-of-service)
 - [Spotify Developer Terms](https://developer.spotify.com/terms)
 
-## Built With
+</details>
+
+<details>
+<summary><h2>🛠️ Built With</h2></summary>
 
 - [google-api-python-client](https://github.com/googleapis/google-api-python-client) - YouTube API
 - [spotipy](https://github.com/plamere/spotipy) - Spotify API
 - [gradio](https://github.com/gradio-app/gradio) - Web UI framework
+- [sentence-transformers](https://github.com/UKPLab/sentence-transformers) - Semantic similarity matching
+- [PyTorch](https://pytorch.org/) - Deep learning framework for embeddings
 
-## Support
+</details>
+
+<details>
+<summary><h2>💬 Support</h2></summary>
 
 If you encounter issues:
 1. Check the log file for detailed error messages
 2. Verify your API credentials are correct
 3. Ensure all dependencies are installed
 4. Check API quotas haven't been exceeded
+
+</details>
 
 ---
 
