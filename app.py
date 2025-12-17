@@ -6,7 +6,6 @@ Beautiful browser-based interface for playlist migration
 import gradio as gr
 import logging
 import sys
-import json
 import os
 from typing import Tuple, Dict, List, Optional
 from datetime import datetime
@@ -29,6 +28,145 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+# Model size information
+MODEL_SIZES = {
+    'paraphrase-MiniLM-L3-v2': '~60MB',
+    'all-MiniLM-L6-v2': '~80MB',
+    'all-MiniLM-L12-v2': '~120MB',
+    'all-mpnet-base-v2': '~420MB'
+}
+
+# Model information for UI display
+MODEL_INFO = {
+    'string_only': {
+        'name': 'String Matching Only',
+        'size': '0MB',
+        'description': 'Uses basic text similarity without AI models',
+        'benefits': 'Fastest matching, no download required, basic accuracy'
+    },
+    'paraphrase-MiniLM-L3-v2': {
+        'name': 'MiniLM-L3',
+        'size': '~60MB',
+        'description': 'Lightweight sentence transformer model',
+        'benefits': 'Very fast matching with decent accuracy'
+    },
+    'all-MiniLM-L6-v2': {
+        'name': 'MiniLM-L6',
+        'size': '~80MB',
+        'description': 'Balanced sentence transformer model',
+        'benefits': 'Fast matching with good accuracy'
+    },
+    'all-MiniLM-L12-v2': {
+        'name': 'MiniLM-L12',
+        'size': '~120MB',
+        'description': 'Enhanced sentence transformer model',
+        'benefits': 'Balanced performance with very good accuracy'
+    },
+    'all-mpnet-base-v2': {
+        'name': 'MPNet Base',
+        'size': '~420MB',
+        'description': 'Advanced sentence transformer model',
+        'benefits': 'Best matching accuracy (slower due to larger size)'
+    }
+}
+
+
+def _get_settings():
+    """
+    Get application settings from config file.
+
+    Returns:
+        Settings dictionary or None if not configured
+    """
+    from config_manager import ConfigManager
+    config_mgr = ConfigManager()
+    return config_mgr.get_settings()
+
+
+def _initialize_transfer(settings: dict):
+    """
+    Initialize PlaylistTransfer with settings.
+
+    Args:
+        settings: Configuration dictionary
+
+    Returns:
+        Tuple of (transfer_object, error_message)
+        If successful: (PlaylistTransfer, None)
+        If failed: (None, error_message_string)
+    """
+    try:
+        transfer = PlaylistTransfer(
+            youtube_api_key=settings['youtube_api_key'],
+            spotify_client_id=settings['spotify_client_id'],
+            spotify_client_secret=settings['spotify_client_secret'],
+            spotify_redirect_uri=settings['spotify_redirect_uri'],
+            spotify_scope=settings['spotify_scope']
+        )
+        return (transfer, None)
+    except Exception as e:
+        error_msg = (
+            f"❌ Error: Failed to initialize with provided settings.\n\n"
+            f"Please check your API credentials in Settings.\n\n"
+            f"Details: {str(e)}"
+        )
+        return (None, error_msg)
+
+
+def get_model_info_markdown(model_name: str = None) -> str:
+    """
+    Generate dynamic Markdown for model information display.
+
+    Args:
+        model_name: Name of the selected model (e.g., 'all-mpnet-base-v2')
+                   If None, loads from settings or uses default
+
+    Returns:
+        Markdown string with model information
+    """
+    # Get model name from settings if not provided
+    if model_name is None:
+        settings = _get_settings()
+        if settings and 'embedding_model' in settings:
+            model_name = settings['embedding_model']
+        else:
+            model_name = 'all-mpnet-base-v2'  # Default
+
+    # Get model info from dictionary
+    info = MODEL_INFO.get(model_name, MODEL_INFO['all-mpnet-base-v2'])
+
+    # Special handling for string_only mode
+    if model_name == 'string_only':
+        return f"""
+### About the Matching Method
+
+This application uses **{info['name']}** (no AI model) for track matching.
+
+**Details:**
+- **Size:** {info['size']}
+- **Download:** Not required
+- **Method:** {info['description']}
+- **Trade-off:** {info['benefits']}
+
+⚠️ **Note:** String matching is faster but less accurate than semantic models. Consider using a sentence transformer model for better results.
+"""
+
+    # For sentence transformer models
+    return f"""
+### About the Semantic Matching Model
+
+This application uses **{model_name}** ({info['name']}), a sentence transformer model for improved track matching accuracy.
+
+**Model Details:**
+- **Size:** {info['size']}
+- **Download:** One-time, automatic on first use
+- **Purpose:** Semantic similarity matching between YouTube titles and Spotify tracks
+- **Benefits:** {info['benefits']}
+
+The model will download automatically when you fetch tracks for the first time.
+"""
+
+
 def validate_cover_image(image_path: str) -> Tuple[bool, str]:
     """
     Validate cover image meets Spotify requirements.
@@ -39,7 +177,6 @@ def validate_cover_image(image_path: str) -> Tuple[bool, str]:
     Returns:
         Tuple of (is_valid, error_message)
     """
-    import os
     from PIL import Image
 
     if not image_path or not os.path.exists(image_path):
@@ -96,9 +233,7 @@ def fetch_tracks(
         progress(0.1, desc="Initializing...")
 
         # Load configuration
-        from config_manager import ConfigManager
-        config_mgr = ConfigManager()
-        settings = config_mgr.get_settings()
+        settings = _get_settings()
 
         # Check if settings exist
         if settings is None:
@@ -113,18 +248,10 @@ def fetch_tracks(
             )
 
         # Initialize transfer with settings
-        try:
-            transfer = PlaylistTransfer(
-                youtube_api_key=settings['youtube_api_key'],
-                spotify_client_id=settings['spotify_client_id'],
-                spotify_client_secret=settings['spotify_client_secret'],
-                spotify_redirect_uri=settings['spotify_redirect_uri'],
-                spotify_scope=settings['spotify_scope']
-            )
-        except Exception as e:
+        transfer, error = _initialize_transfer(settings)
+        if error:
             return (
-                f"❌ Error: Failed to initialize with provided settings.\n\n"
-                f"Please check your API credentials in Settings.\n\nDetails: {str(e)}",
+                error,
                 [],
                 {},
                 "",
@@ -269,12 +396,22 @@ def create_playlist(
     spotify_name: str,
     description: str,
     cover_image,
+    make_public: bool,
     tracks_dataframe,
     state_dict,
     progress=gr.Progress()
 ) -> Tuple[str, str]:
     """
     Create Spotify playlist with selected tracks, description, and cover image.
+
+    Args:
+        spotify_name: Name for the Spotify playlist
+        description: Playlist description
+        cover_image: Path to cover image file (optional)
+        make_public: Override default playlist visibility (True=public, False=private, None=use default)
+        tracks_dataframe: Dataframe with selected tracks
+        state_dict: State dictionary containing playlist data
+        progress: Gradio progress tracker
 
     Returns:
         Tuple of (status_message, playlist_url)
@@ -299,9 +436,7 @@ def create_playlist(
         progress(0.1, desc="Initializing...")
 
         # Load configuration
-        from config_manager import ConfigManager
-        config_mgr = ConfigManager()
-        settings = config_mgr.get_settings()
+        settings = _get_settings()
 
         # Check if settings exist
         if settings is None:
@@ -311,13 +446,9 @@ def create_playlist(
             )
 
         # Initialize transfer with settings
-        transfer = PlaylistTransfer(
-            youtube_api_key=settings['youtube_api_key'],
-            spotify_client_id=settings['spotify_client_id'],
-            spotify_client_secret=settings['spotify_client_secret'],
-            spotify_redirect_uri=settings['spotify_redirect_uri'],
-            spotify_scope=settings['spotify_scope']
-        )
+        transfer, error = _initialize_transfer(settings)
+        if error:
+            return (error, "")
 
         # Get selected tracks from dataframe
         selected_indices = []
@@ -335,8 +466,7 @@ def create_playlist(
 
                 for i, row in enumerate(dataframe_list):
                     # Check if selected (first column is checkbox)
-                    # Handle both boolean and string representations
-                    if row[0] is True or row[0] == True or row[0] == 'True' or row[0] == 1:
+                    if row[0]:  # Truthy check handles True, 'True', 1, etc.
                         selected_indices.append(i)
 
                 logger.info(f"Processing {len(dataframe_list)} tracks: {len(selected_indices)} selected, {len(dataframe_list) - len(selected_indices)} unchecked")
@@ -382,10 +512,18 @@ def create_playlist(
 
         # Create playlist
         try:
+            # Determine playlist visibility:
+            # 1. Use checkbox value if explicitly set (True or False)
+            # 2. Otherwise, use global setting from Settings
+            if make_public is None:
+                is_public = settings.get('create_public_playlists', False)
+            else:
+                is_public = make_public
+
             playlist_id = transfer.spotify.create_playlist(
                 name=spotify_name,
                 description=description,
-                public=settings.get('create_public_playlists', False)
+                public=is_public
             )
 
             if not playlist_id:
@@ -481,7 +619,11 @@ def load_current_settings() -> Dict:
     config_mgr = ConfigManager()
     if config_mgr.settings_exist():
         try:
-            return config_mgr.load_settings()
+            settings = config_mgr.load_settings()
+            # Ensure embedding_model has a default value
+            if 'embedding_model' not in settings:
+                settings['embedding_model'] = 'all-mpnet-base-v2'
+            return settings
         except Exception:
             pass
 
@@ -493,8 +635,30 @@ def load_current_settings() -> Dict:
         'spotify_redirect_uri': 'http://127.0.0.1:8080/callback',
         'spotify_scope': 'playlist-modify-public playlist-modify-private ugc-image-upload',
         'create_public_playlists': False,
-        'max_videos': None
+        'max_videos': None,
+        'embedding_model': 'all-mpnet-base-v2'
     }
+
+
+def populate_settings_ui():
+    """
+    Load settings from config file and return values for UI population.
+
+    Returns:
+        Tuple of values matching Settings UI input fields order
+    """
+    settings = load_current_settings()
+
+    return (
+        settings.get('youtube_api_key', ''),
+        settings.get('spotify_client_id', ''),
+        settings.get('spotify_client_secret', ''),
+        settings.get('spotify_redirect_uri', 'http://127.0.0.1:8080/callback'),
+        settings.get('spotify_scope', 'playlist-modify-public playlist-modify-private ugc-image-upload'),
+        settings.get('create_public_playlists', False),
+        settings.get('max_videos'),
+        settings.get('embedding_model', 'all-mpnet-base-v2')
+    )
 
 
 def check_model_status() -> str:
@@ -507,21 +671,42 @@ def check_model_status() -> str:
     from utils import _embedding_matcher
 
     try:
+        model_name = _embedding_matcher._model_name or 'all-mpnet-base-v2'
         status = _embedding_matcher.get_model_status()
 
-        status_msg = f"""
-### 📊 Model Status Check
+        if model_name == 'string_only':
+            return f"""
+### 🔤 String Matching Mode
 
-**Model:** all-mpnet-base-v2 &nbsp;&nbsp;&nbsp; **Size:** ~420MB &nbsp;&nbsp;&nbsp; **Status:** {status}
+**Status:** {status}
 
-**What this means:**
-- ✓ **Downloaded**: Model is ready to use
-- **Not downloaded**: Model will download automatically on first use (one-time, ~2-3 minutes)
+**Details:**
+- **No model download required**
+- **Matching method:** Traditional string similarity (SequenceMatcher)
+- **Pros:** Instant startup, no disk space needed, very fast
+- **Cons:** Lower accuracy than AI models, misses semantic similarities
 
-The model improves track matching accuracy using semantic similarity instead of simple text matching.
-        """
+**Note:** This mode is fastest but may miss valid matches. Consider using an AI model for better results.
+"""
 
-        return status_msg
+        # Get model size info
+        size = MODEL_SIZES.get(model_name, 'Unknown')
+
+        return f"""
+### 🤖 Semantic Matching Model Status
+
+**Current Model:** `{model_name}` &nbsp;&nbsp;&nbsp; **Size:** {size} &nbsp;&nbsp;&nbsp; **Status:** {status}
+
+**How it works:**
+- Converts track titles to semantic embeddings (vector representations)
+- Compares similarity using cosine distance (0.0 to 1.0)
+- Threshold: 0.6 (adjustable in utils.py)
+
+**First-time use:** Model downloads automatically when you fetch tracks.
+**Subsequent uses:** Model loads from cache instantly.
+
+**Change model:** Update selection in Settings and restart the app.
+"""
 
     except Exception as e:
         return f"""
@@ -531,6 +716,154 @@ Could not check model status: {str(e)}
 
 The model will still attempt to download automatically when needed.
         """
+
+
+def check_model_status_for_selection(selected_model: str) -> str:
+    """
+    Check status for a specific model selection (not necessarily loaded).
+
+    Args:
+        selected_model: Model name from dropdown selection
+
+    Returns:
+        Markdown formatted status message
+    """
+    from utils import _embedding_matcher
+
+    try:
+        # Check if this is the currently configured model
+        current_model = _embedding_matcher._model_name or 'all-mpnet-base-v2'
+        is_current = (selected_model == current_model)
+
+        # String-only mode
+        if selected_model == 'string_only':
+            return f"""
+### 🔤 String Matching Mode {"**(Currently Active)**" if is_current else ""}
+
+**Status:** No model needed
+
+**Details:**
+- **No model download required**
+- **Matching method:** Traditional string similarity (SequenceMatcher)
+- **Pros:** Instant startup, no disk space needed, very fast
+- **Cons:** Lower accuracy than AI models, misses semantic similarities
+
+{"**Note:** This is your current active mode." if is_current else "**Note:** Save settings and restart to activate this mode."}
+"""
+
+        # AI model mode
+        size = MODEL_SIZES.get(selected_model, 'Unknown')
+
+        # Check if model is downloaded
+        is_downloaded = _embedding_matcher.is_model_downloaded(selected_model)
+
+        if is_downloaded:
+            status_icon = "✅"
+            status_text = "Downloaded and ready"
+        else:
+            status_icon = "⬇️"
+            status_text = "Not downloaded (will download on first use)"
+
+        active_badge = " **(Currently Active)**" if is_current else ""
+
+        return f"""
+### 🤖 Semantic Matching Model{active_badge}
+
+**Selected Model:** `{selected_model}`
+**Size:** {size}
+**Status:** {status_icon} {status_text}
+
+**Model Info:**
+- **Speed:** {"Very Fast" if "Mini" in selected_model else "Moderate"}
+- **Accuracy:** {"Good" if "L6" in selected_model else "Best" if "mpnet" in selected_model else "Very Good"}
+- **Download:** {"Not needed - already cached ✓" if is_downloaded else "Required (~" + size + " download)"}
+
+{"**Note:** This is your current active model." if is_current else "**Note:** Save settings and restart app to activate this model."}
+"""
+
+    except Exception as e:
+        return f"❌ Error checking model status: {str(e)}"
+
+
+def download_selected_model_with_progress(selected_model: str, progress=gr.Progress()) -> str:
+    """
+    Download model with progress tracking.
+
+    Args:
+        selected_model: Model name to download
+        progress: Gradio Progress object
+
+    Returns:
+        Status message markdown
+    """
+    from utils import _embedding_matcher
+    from sentence_transformers import SentenceTransformer
+
+    try:
+        # Check if string_only
+        if selected_model == 'string_only':
+            return "ℹ️ **No Download Needed**\n\nString-only mode doesn't use a model."
+
+        # Check if already downloaded
+        if _embedding_matcher.is_model_downloaded(selected_model):
+            return f"✅ **Already Downloaded**\n\nModel `{selected_model}` is already in your cache."
+
+        # Show progress
+        progress(0, desc="Starting download...")
+
+        size = MODEL_SIZES.get(selected_model, 'Unknown')
+
+        progress(0.3, desc=f"Downloading {selected_model} ({size})...")
+        logger.info(f"Downloading model: {selected_model}")
+
+        # Download model
+        model = SentenceTransformer(selected_model)
+
+        progress(1.0, desc="Download complete!")
+        logger.info(f"✓ Model {selected_model} downloaded successfully")
+
+        return f"✅ **Download Complete!**\n\nModel `{selected_model}` has been downloaded and cached.\n\nTo use it: Save settings and restart the app."
+
+    except Exception as e:
+        logger.error(f"Failed to download model {selected_model}: {e}")
+        progress(0, desc="Download failed")
+        return f"❌ **Download Failed**\n\nError: {str(e)}\n\nPlease check your internet connection and try again."
+
+
+def delete_selected_model(selected_model: str) -> str:
+    """
+    Delete the selected embedding model from disk cache.
+
+    Args:
+        selected_model: Model name from dropdown selection
+
+    Returns:
+        Status message markdown
+    """
+    from utils import _embedding_matcher
+
+    try:
+        # Check if string_only
+        if selected_model == 'string_only':
+            return "ℹ️ **No Model to Delete**\n\nString-only mode doesn't use a model."
+
+        # Check if model is actually downloaded
+        if not _embedding_matcher.is_model_downloaded(selected_model):
+            return f"ℹ️ **Model Not Downloaded**\n\nModel `{selected_model}` is not in your cache."
+
+        # Delete the model
+        success, message = _embedding_matcher.delete_model(selected_model)
+
+        if success:
+            logger.info(f"Successfully deleted model: {selected_model}")
+            return f"✅ **Model Deleted**\n\n{message}\n\nModel `{selected_model}` has been removed from your cache."
+        else:
+            logger.warning(f"Failed to delete model {selected_model}: {message}")
+            return f"❌ **Delete Failed**\n\n{message}"
+
+    except Exception as e:
+        logger.error(f"Error deleting model {selected_model}: {e}")
+        return f"❌ **Delete Failed**\n\nError: {str(e)}"
 
 
 def check_config_status() -> str:
@@ -578,6 +911,92 @@ Please configure your API credentials below to get started.
 """
 
 
+def restart_application():
+    """
+    Restart the Gradio application and trigger auto-reload.
+
+    This function uses os.execv() to restart the Python process in-place.
+    A 3-second delay is added to allow the restart message to be displayed.
+    Returns HTML with JavaScript to automatically reload the page.
+
+    Returns:
+        HTML message with JavaScript to reload page
+    """
+    import time
+    import threading
+
+    def delayed_restart():
+        """Delay restart to allow message to be displayed"""
+        time.sleep(3)  # Increased to 3 seconds
+        # Restart the Python process in-place
+        python = sys.executable
+        os.execv(python, [python] + sys.argv)
+
+    # Start restart in background thread
+    restart_thread = threading.Thread(target=delayed_restart, daemon=True)
+    restart_thread.start()
+
+    # Return HTML with embedded JavaScript to auto-reload
+    return """
+<div style="max-width: 100%; padding: 10px; text-align: center; word-wrap: break-word;">
+    <h3 style="font-size: 1em; margin: 0 0 8px 0;">🔄 Restarting...</h3>
+    <p style="font-size: 0.85em; margin: 0 0 5px 0;">Page will reload automatically.</p>
+    <p style="font-size: 0.75em; margin: 0;"><small>If not, refresh manually.</small></p>
+</div>
+
+<script>
+(function() {
+    // Wait 4 seconds, then check if server is back every second
+    setTimeout(() => {
+        const checkInterval = setInterval(() => {
+            fetch(window.top.location.href)
+                .then(response => {
+                    if (response.ok) {
+                        clearInterval(checkInterval);
+                        setTimeout(() => {
+                            window.top.location.reload(true);  // Force reload in top-level window
+                        }, 500);
+                    }
+                })
+                .catch(() => {
+                    // Server not ready yet, keep checking
+                    console.log('Server not ready, checking again...');
+                });
+        }, 1000);
+    }, 4000);
+})();
+</script>
+"""
+
+
+def exit_application():
+    """
+    Exit the Gradio application gracefully.
+
+    Returns:
+        HTML message indicating shutdown
+    """
+    import threading
+    import time
+
+    def delayed_exit():
+        """Delay exit to allow message to be displayed"""
+        time.sleep(2)
+        import os
+        os._exit(0)  # Force exit the process
+
+    exit_thread = threading.Thread(target=delayed_exit, daemon=True)
+    exit_thread.start()
+
+    return """
+<div style="max-width: 100%; padding: 10px; text-align: center; word-wrap: break-word;">
+    <h3 style="font-size: 1em; margin: 0 0 8px 0;">👋 Shutting down...</h3>
+    <p style="font-size: 0.85em; margin: 0 0 5px 0;">Application will close in 2 seconds.</p>
+    <p style="font-size: 0.75em; margin: 0;"><small>You can close this browser tab.</small></p>
+</div>
+"""
+
+
 def save_settings_handler(
     youtube_api_key: str,
     spotify_client_id: str,
@@ -585,7 +1004,8 @@ def save_settings_handler(
     spotify_redirect_uri: str,
     spotify_scope: str,
     create_public_playlists: bool,
-    max_videos: Optional[float]
+    max_videos: Optional[float],
+    embedding_model: str
 ) -> str:
     """
     Save settings and return status message
@@ -598,6 +1018,7 @@ def save_settings_handler(
         spotify_scope: Spotify API scopes
         create_public_playlists: Whether to create public playlists by default
         max_videos: Maximum videos to process (None for unlimited)
+        embedding_model: Semantic matching model to use
 
     Returns:
         Status message (success or error)
@@ -616,6 +1037,7 @@ def save_settings_handler(
         'spotify_scope': spotify_scope.strip() if spotify_scope else 'playlist-modify-public playlist-modify-private ugc-image-upload',
         'create_public_playlists': create_public_playlists,
         'max_videos': int(max_videos) if max_videos and max_videos > 0 else None,
+        'embedding_model': embedding_model,
         'last_updated': datetime.now().isoformat()
     }
 
@@ -655,6 +1077,22 @@ Please check:
 def create_ui():
     """Create and configure Gradio interface"""
 
+    # Initialize embedding model from config
+    try:
+        from utils import _embedding_matcher
+
+        settings = _get_settings()
+        if settings and 'embedding_model' in settings:
+            model_name = settings['embedding_model']
+            _embedding_matcher.set_model_name(model_name)
+            logger.info(f"Configured to use embedding model: {model_name}")
+        else:
+            _embedding_matcher.set_model_name('all-mpnet-base-v2')
+            logger.info("Using default embedding model: all-mpnet-base-v2")
+    except Exception as e:
+        logger.warning(f"Failed to initialize embedding model config: {e}")
+        _embedding_matcher.set_model_name('all-mpnet-base-v2')
+
     # Custom CSS for better styling
     custom_css = """
     .container {
@@ -667,6 +1105,22 @@ def create_ui():
     .progress-bar {
         margin: 20px 0;
     }
+
+    /* Remove white glow from all input fields */
+    input[type="password"],
+    input[type="text"],
+    textarea {
+        border: 1px solid #d0d0d0 !important;
+        box-shadow: none !important;
+    }
+
+    input[type="password"]:focus,
+    input[type="text"]:focus,
+    textarea:focus {
+        border-color: #7c3aed !important;
+        box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.1) !important;
+        outline: none !important;
+    }
     """
 
     with gr.Blocks(
@@ -675,21 +1129,38 @@ def create_ui():
         title="YouTube to Spotify Playlist Transfer"
     ) as app:
 
-        gr.Markdown(
-            """
-            # 🎵 YouTube to Spotify Playlist Transfer
+        # Main header with restart button in top-right corner
+        with gr.Row():
+            with gr.Column(scale=10):
+                gr.Markdown(
+                    """
+                    # 🎵 YouTube to Spotify Playlist Transfer
 
-            Automatically transfer your YouTube playlists to Spotify with intelligent track matching.
+                    Automatically transfer your YouTube playlists to Spotify with intelligent track matching.
 
-            ### How to use:
-            1. **Fetch Tracks**: Enter YouTube playlist URL and click "Fetch Tracks"
-            2. **Review & Select**: Review matched tracks and uncheck any you don't want
-            3. **Customize**: Add cover image and description (optional)
-            4. **Create**: Click "Create Spotify Playlist"
+                    ### How to use:
+                    1. **Fetch Tracks**: Enter YouTube playlist URL and click "Fetch Tracks"
+                    2. **Review & Select**: Review matched tracks and uncheck any you don't want
+                    3. **Customize**: Add cover image and description (optional)
+                    4. **Create**: Click "Create Spotify Playlist"
 
-            ---
-            """
-        )
+                    ---
+                    """
+                )
+            with gr.Column(scale=1, min_width=200):
+                restart_btn = gr.Button(
+                    "🔄 Restart App",
+                    variant="secondary",
+                    size="lg"
+                )
+                restart_status = gr.HTML("", visible=False)
+
+                exit_btn = gr.Button(
+                    "❌ Exit App",
+                    variant="stop",
+                    size="lg"
+                )
+                exit_status = gr.HTML("", visible=False)
 
         # State to store matched tracks between steps
         state = gr.State({})
@@ -757,12 +1228,12 @@ Settings are saved locally and will be used for all future transfers.
                     gr.Markdown("#### Advanced Settings")
                     spotify_redirect_uri_input = gr.Textbox(
                         label="Spotify Redirect URI",
-                        value="http://127.0.0.1:8080/callback",
+                        placeholder="http://127.0.0.1:8080/callback",
                         info="Must match what you set in Spotify app settings"
                     )
                     spotify_scope_input = gr.Textbox(
                         label="Spotify API Scopes",
-                        value="playlist-modify-public playlist-modify-private ugc-image-upload",
+                        placeholder="playlist-modify-public playlist-modify-private ugc-image-upload",
                         info="OAuth permissions (keep default unless you know what you're doing)"
                     )
 
@@ -780,27 +1251,33 @@ Settings are saved locally and will be used for all future transfers.
                         info="Leave empty for unlimited"
                     )
 
+                    embedding_model_input = gr.Dropdown(
+                        choices=[
+                            ("String matching only (0MB, fastest, basic accuracy)", "string_only"),
+                            ("MiniLM-L3 (60MB, very fast, decent accuracy)", "paraphrase-MiniLM-L3-v2"),
+                            ("MiniLM-L6 (80MB, fast, good accuracy)", "all-MiniLM-L6-v2"),
+                            ("MiniLM-L12 (120MB, balanced, very good accuracy)", "all-MiniLM-L12-v2"),
+                            ("MPNet Base (420MB, slower, best accuracy) [Default]", "all-mpnet-base-v2")
+                        ],
+                        value="all-mpnet-base-v2",
+                        label="🧠 Semantic Matching Model",
+                        info="⚠️ Restart app after changing. Smaller models = faster but less accurate matching."
+                    )
+
             save_settings_btn = gr.Button("💾 Save Settings", variant="primary", size="lg")
             settings_status = gr.Markdown()
 
         # Model Status Section
         with gr.Accordion("🤖 Semantic Matching Model Status", open=False):
-            gr.Markdown("""
-### About the Semantic Matching Model
+            model_info_display = gr.Markdown(get_model_info_markdown())
 
-This application uses **all-mpnet-base-v2**, a sentence transformer model for improved track matching accuracy.
+            with gr.Row():
+                check_model_btn = gr.Button("🔍 Check Model Status", size="sm")
+                download_model_btn = gr.Button("⬇️ Download Selected Model", size="sm", variant="primary")
+                delete_model_btn = gr.Button("🗑️ Delete Selected Model", size="sm", variant="stop")
 
-**Model Details:**
-- **Size:** ~420MB
-- **Download:** One-time, automatic on first use
-- **Purpose:** Semantic similarity matching between YouTube titles and Spotify tracks
-- **Benefits:** Better matching accuracy than simple text similarity
-
-The model will download automatically when you fetch tracks for the first time.
-            """)
-
-            check_model_btn = gr.Button("🔍 Check Model Status", size="sm")
             model_status_display = gr.Markdown("**Status:** Click button to check")
+            download_progress = gr.Markdown("", visible=False)
 
         gr.Markdown("---")
 
@@ -910,7 +1387,13 @@ Once processing is complete, this section will show:
                     type="filepath",
                     sources=["upload"],
                     image_mode="RGB",
-                    height=250
+                    height=190
+                )
+
+                make_playlist_public_input = gr.Checkbox(
+                    label="🌐 Make this playlist public",
+                    value=None,
+                    info="Override default setting (leave unchecked to use Settings default)"
                 )
 
         gr.Markdown("---")
@@ -962,7 +1445,14 @@ Once processing is complete, this section will show:
         # Connect the create button
         create_btn.click(
             fn=create_playlist,
-            inputs=[spotify_name_input, description_input, cover_image_input, tracks_table, state],
+            inputs=[
+                spotify_name_input,
+                description_input,
+                cover_image_input,
+                make_playlist_public_input,
+                tracks_table,
+                state
+            ],
             outputs=[create_status, playlist_url_output],
         )
 
@@ -976,7 +1466,8 @@ Once processing is complete, this section will show:
                 spotify_redirect_uri_input,
                 spotify_scope_input,
                 create_public_input,
-                max_videos_input
+                max_videos_input,
+                embedding_model_input
             ],
             outputs=[settings_status]
         )
@@ -985,6 +1476,56 @@ Once processing is complete, this section will show:
         check_model_btn.click(
             fn=check_model_status,
             outputs=[model_status_display]
+        )
+
+        # Update model status when dropdown changes
+        embedding_model_input.change(
+            fn=check_model_status_for_selection,
+            inputs=[embedding_model_input],
+            outputs=[model_status_display]
+        )
+
+        # Update model info display when dropdown changes
+        embedding_model_input.change(
+            fn=get_model_info_markdown,
+            inputs=[embedding_model_input],
+            outputs=[model_info_display]
+        )
+
+        # Download model button connection
+        download_model_btn.click(
+            fn=download_selected_model_with_progress,
+            inputs=[embedding_model_input],
+            outputs=[model_status_display]
+        )
+
+        # Delete model button connection
+        delete_model_btn.click(
+            fn=delete_selected_model,
+            inputs=[embedding_model_input],
+            outputs=[model_status_display]
+        ).then(
+            fn=check_model_status_for_selection,
+            inputs=[embedding_model_input],
+            outputs=[model_status_display]
+        )
+
+        # Restart button connection
+        restart_btn.click(
+            fn=restart_application,
+            outputs=[restart_status]
+        ).then(
+            lambda: gr.update(visible=True),
+            outputs=[restart_status]
+        )
+
+        # Exit button connection
+        exit_btn.click(
+            fn=exit_application,
+            outputs=[exit_status]
+        ).then(
+            lambda: gr.update(visible=True),
+            outputs=[exit_status]
         )
 
         # Check model status on page load
@@ -997,6 +1538,27 @@ Once processing is complete, this section will show:
         app.load(
             fn=check_config_status,
             outputs=[config_status_display]
+        )
+
+        # Populate settings form with saved values
+        app.load(
+            fn=populate_settings_ui,
+            outputs=[
+                youtube_api_key_input,
+                spotify_client_id_input,
+                spotify_client_secret_input,
+                spotify_redirect_uri_input,
+                spotify_scope_input,
+                create_public_input,
+                max_videos_input,
+                embedding_model_input
+            ]
+        )
+
+        # Update model info display on page load
+        app.load(
+            fn=get_model_info_markdown,
+            outputs=[model_info_display]
         )
 
     return app
