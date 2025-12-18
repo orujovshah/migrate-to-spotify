@@ -7,6 +7,7 @@ import gradio as gr
 import logging
 import sys
 import os
+import requests
 from typing import Tuple, Dict, List, Optional
 from datetime import datetime
 
@@ -313,8 +314,7 @@ def fetch_tracks(
         tracks_data = []
         state_data = {
             'playlist_info': playlist_info,
-            'matches': [],
-            'transfer': None  # Will be set during create
+            'matches': []
         }
 
         for i, (video, track, status) in enumerate(matches):
@@ -391,6 +391,165 @@ def fetch_tracks(
             gr.update(visible=False)   # Hide content
         )
 
+
+def show_track_preview(track_id: str, track: dict) -> str:
+    """
+    Generate HTML preview modal for a Spotify track with iframe + lyrics panel (lrclib.net).
+
+    Args:
+        track_id: Spotify track ID to preview
+        track: Spotify track object with 'name' and 'artists' fields
+
+    Returns:
+        HTML string with Spotify embedded player and lyrics
+    """
+    try:
+        track_name = track.get("name", "")
+        # Extract first artist name from artists array
+        artists = track.get("artists", [])
+        artist_name = artists[0]['name'] if artists else ""
+
+        # Fetch lyrics from lrclib.net
+        lyrics = "Lyrics not found"
+        try:
+            response = requests.get(
+                "https://lrclib.net/api/search",
+                params={"track_name": track_name, "artist_name": artist_name},
+                timeout=5
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            # API returns array of lyrics records
+            if data and len(data) > 0:
+                first_result = data[0]
+                # Try plainLyrics first, fall back to syncedLyrics
+                lyrics = first_result.get("plainLyrics") or first_result.get("syncedLyrics") or "Lyrics not available"
+            else:
+                lyrics = "No lyrics found for this track"
+        except Exception as e:
+            logger.error(f"Error fetching lyrics: {e}")
+            lyrics = f"Could not load lyrics: {str(e)}"
+
+        # Return HTML with two columns: Spotify iframe left, lyrics right
+        html = f"""
+        <div style="display: flex; gap: 20px;">
+            <!-- Spotify Player -->
+            <div style="flex: 1;">
+                <iframe 
+                    src="https://open.spotify.com/embed/track/{track_id}" 
+                    width="100%" height="380" frameborder="0" 
+                    allowtransparency="true" allow="encrypted-media">
+                </iframe>
+            </div>
+
+            <!-- Lyrics Panel -->
+            <div style="flex: 1; max-height: 350px; overflow-y: auto; padding: 10px;
+                        border: 1px solid #1db954; border-radius: 8px; background: #1db954;">
+                <pre style="white-space: pre-wrap; color: white;">{lyrics}</pre>
+            </div>
+        </div>
+        """
+        return html
+
+    except Exception as e:
+        return f"<div style='padding: 20px; color: #dc2626;'>❌ Error: {str(e)}</div>"
+
+def generate_youtube_preview(video_id: str, video_info: dict) -> str:
+    """
+    Generate YouTube video preview HTML with embedded player only.
+
+    Args:
+        video_id: YouTube video ID
+        video_info: Video metadata (unused)
+
+    Returns:
+        HTML string with embedded YouTube player
+    """
+    try:
+        html = f"""
+        <iframe
+            width="100%"
+            height="360"
+            src="https://www.youtube.com/embed/{video_id}"
+            title="YouTube video player"
+            frameborder="0"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            allowfullscreen
+            style="border-radius: 8px;">
+        </iframe>
+        """
+        return html
+
+    except Exception as e:
+        return f"<div style='padding: 20px; color: #dc2626;'>❌ Error: {str(e)}</div>"
+
+def on_track_table_click(state_dict: dict, evt: gr.SelectData) -> Tuple[str, str]:
+    """
+    Handle clicks on the tracks table to show appropriate preview.
+    Args:
+        state_dict: State containing matched tracks
+        evt: Gradio SelectData event with index [row, col]
+    Returns:
+        Tuple of (spotify_modal_content, youtube_modal_content)
+    """
+    if not state_dict or 'matches' not in state_dict:
+        return "", ""
+    if not evt or not hasattr(evt, 'index'):
+        return "", ""
+    row_idx, col_idx = evt.index
+    matches = state_dict['matches']
+    if row_idx >= len(matches):
+        return "", ""
+    match = matches[row_idx]
+    # Column 1: YouTube Title (index 1)
+    if col_idx == 1:
+        video_id = match['video']['video_id']
+        youtube_content = generate_youtube_preview(video_id, match['video'])
+        return "", youtube_content
+    # Column 2: Spotify Match (index 2)
+    elif col_idx == 2:
+        if match['status'] != 'matched':
+            return "<div>This track was not matched to Spotify</div>", ""
+        track_id = match['track']['id']
+        spotify_content = show_track_preview(track_id, match['track'])
+        return spotify_content, ""
+    # Column 0 (checkbox) or 3 (confidence) - no preview
+    return "", ""
+
+def update_spotify_modal(content: str) -> Tuple[str, str]:
+    """Update Spotify modal with content and show it"""
+    if not content:
+        return "", ""
+    modal_html = f"""
+    <div id="spotify-modal" style="display: block; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5);">
+        <div style="background: white; margin: 5% auto; padding: 0; max-width: 500px; border-radius: 8px; position: relative;">
+            <button onclick="document.getElementById('spotify-modal').style.display='none'"
+                    style="position: absolute; right: 10px; top: 10px; background: none; border: none; font-size: 24px; cursor: pointer; z-index: 1001;">
+                ✕
+            </button>
+            <div id="spotify-modal-content">{content}</div>
+        </div>
+    </div>
+    """
+    return modal_html, ""
+
+def update_youtube_modal(content: str) -> Tuple[str, str]:
+    """Update YouTube modal with content and show it"""
+    if not content:
+        return "", ""
+    modal_html = f"""
+    <div id="youtube-modal" style="display: block; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5);">
+        <div style="background: white; margin: 5% auto; padding: 0; max-width: 700px; border-radius: 8px; position: relative;">
+            <button onclick="document.getElementById('youtube-modal').style.display='none'"
+                    style="position: absolute; right: 10px; top: 10px; background: none; border: none; font-size: 24px; cursor: pointer; z-index: 1001;">
+                ✕
+            </button>
+            <div id="youtube-modal-content">{content}</div>
+        </div>
+    </div>
+    """
+    return "", modal_html
 
 def create_playlist(
     spotify_name: str,
@@ -1349,7 +1508,12 @@ Once processing is complete, this section will show:
 
             # Actual tracks table (hidden initially)
             with gr.Column(visible=False) as step2_content:
-                gr.Markdown("Review the matched tracks below and uncheck any you don't want to include:")
+                gr.Markdown("""
+                ### Review Matched Tracks
+                ✅ **Uncheck** any tracks you don't want to include
+                🎵 **Click Spotify Match** to preview track with audio
+                📺 **Click YouTube Title** to watch the original video
+                """)
 
                 tracks_table = gr.Dataframe(
                     headers=["Include", "YouTube Title", "Spotify Match", "Confidence"],
@@ -1359,6 +1523,14 @@ Once processing is complete, this section will show:
                     wrap=True,
                     label="Matched Tracks (uncheck any you don't want)"
                 )
+
+        # Informational text
+        gr.Markdown("""
+        💡 **Tip:** Click on any **YouTube Title** to watch the video, or **Spotify Match** to preview the track with album art and audio!
+        """)
+        # Modal containers (hidden by default)
+        spotify_modal = gr.HTML(value="")
+        youtube_modal = gr.HTML(value="")
 
         gr.Markdown("---")
 
@@ -1440,6 +1612,13 @@ Once processing is complete, this section will show:
             fn=fetch_tracks,
             inputs=[youtube_input, include_low_conf],
             outputs=[fetch_status, tracks_table, state, fetch_stats, step2_placeholder, step2_content],
+        )
+
+        # Connect track table cell clicks to show modals
+        tracks_table.select(
+            fn=on_track_table_click,
+            inputs=[state],
+            outputs=[spotify_modal, youtube_modal]
         )
 
         # Connect the create button
