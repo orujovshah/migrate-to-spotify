@@ -15,7 +15,8 @@ Automatically transfer your YouTube playlists to Spotify with **AI-powered seman
 - ✅ **Multiple Model Support** - Choose from 5 semantic matching models or string-only mode
 - ✅ **Web UI Interface** - Beautiful browser-based interface with 4-step workflow
 - ✅ **Settings UI** - Configure API keys and model selection directly in the web interface
-- ✅ **Track Preview & Selection** - Review and remove tracks before creating playlist
+- ✅ **Interactive Track Preview** - Click any Spotify match to preview with embedded player and lyrics, or click YouTube title to watch video
+- ✅ **Track Selection** - Review and remove tracks before creating playlist
 - ✅ **Per-Playlist Visibility Control** - Set public/private per playlist, overriding global defaults
 - ✅ **Custom Cover Images** - Upload your own playlist cover art (JPEG, 4KB-256KB)
 - ✅ **Custom Descriptions** - Write personalized playlist descriptions
@@ -121,7 +122,10 @@ The app will automatically open in your default browser at `http://localhost:786
 1. **Step 1**: Enter YouTube playlist URL → Click "Fetch Tracks"
    - First use: Semantic matching model downloads automatically (60MB-420MB depending on model selected, one-time)
    - Subsequent uses: Model loads from cache instantly
-2. **Step 2** (appears after fetching): Review matched tracks in the interactive table → Uncheck any you don't want
+2. **Step 2** (appears after fetching): Review matched tracks in the interactive table
+   - Click **Spotify Match** to preview track with embedded player and lyrics
+   - Click **YouTube Title** to watch the original video
+   - Uncheck any tracks you don't want
 3. **Step 3**: (Optional) Upload cover image, customize name and description
    - (Optional) Check "🌐 Make this playlist public" to override the default visibility setting
 4. **Step 4**: Click "Create Spotify Playlist"
