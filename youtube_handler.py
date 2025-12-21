@@ -81,17 +81,29 @@ class YouTubeHandler:
                 response = request.execute()
                 
                 for item in response['items']:
-                    snippet = item['snippet']
+                    snippet = item.get('snippet')
+                    if not isinstance(snippet, dict):
+                        logger.warning("Skipping playlist item with missing snippet")
+                        continue
+
+                    title = snippet.get('title')
+                    resource_id = snippet.get('resourceId')
+                    video_id = resource_id.get('videoId') if isinstance(resource_id, dict) else None
+                    position = snippet.get('position')
+
+                    if not title or not video_id or position is None:
+                        logger.warning("Skipping malformed playlist item missing required fields")
+                        continue
                     
                     # Skip deleted/private videos
-                    if snippet['title'] == 'Deleted video' or snippet['title'] == 'Private video':
-                        logger.warning(f"Skipping deleted/private video at position {snippet['position']}")
+                    if title == 'Deleted video' or title == 'Private video':
+                        logger.warning(f"Skipping deleted/private video at position {position}")
                         continue
                     
                     video_data = {
-                        'title': snippet['title'],
-                        'video_id': snippet['resourceId']['videoId'],
-                        'position': snippet['position'],
+                        'title': title,
+                        'video_id': video_id,
+                        'position': position,
                         'channel': snippet.get('videoOwnerChannelTitle', 'Unknown')
                     }
                     videos.append(video_data)
