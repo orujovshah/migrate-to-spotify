@@ -18,7 +18,8 @@ Automatically transfer your YouTube playlists to Spotify with **AI-powered seman
 - ✅ **Interactive Track Preview** - Click any Spotify match to preview with embedded player and lyrics, or click YouTube title to watch video
 - ✅ **Track Selection** - Review and remove tracks before creating playlist
 - ✅ **Per-Playlist Visibility Control** - Set public/private per playlist, overriding global defaults
-- ✅ **Custom Cover Images** - Upload your own playlist cover art (JPEG/PNG, max 256KB, 300x300+ recommended)
+- ✅ **Custom Cover Images** - Upload your own playlist cover art (JPEG/PNG, max 256KB, 300x300+ recommended; PNGs auto-converted to JPEG)
+- ✅ **Max Videos Limit** - Cap how many playlist videos are fetched and processed
 - ✅ **Custom Descriptions** - Write personalized playlist descriptions
 - ✅ **Graceful Exit** - Exit the application cleanly from the UI
 - ✅ **CLI Interface** - Interactive command-line tool
@@ -27,7 +28,7 @@ Automatically transfer your YouTube playlists to Spotify with **AI-powered seman
 - ✅ Multiple search query strategies for better matches
 - ✅ Confidence scoring for match quality
 - ✅ Detailed logging of transfer process
-- ✅ Handles deleted/private videos gracefully
+- ✅ Handles deleted/private and malformed playlist items gracefully
 - ✅ Rate limit handling with automatic delays
 - ✅ OAuth authentication for Spotify
 - ✅ **Python 3.13 compatible**
