@@ -334,7 +334,10 @@ def fetch_tracks(
         # Get Playlist
         playlist_id = extract_playlist_id(youtube_url)
         try:
-            playlist_info, videos = transfer.fetch_youtube_playlist(playlist_id)
+            playlist_info, videos = transfer.fetch_youtube_playlist(
+                playlist_id,
+                max_videos=settings.get('max_videos')
+            )
         except Exception as e:
             yield (
                 f"❌ Error: Could not fetch YouTube playlist\n{str(e)}",
