@@ -82,7 +82,6 @@ class EmbeddingMatcher:
         Returns:
             True if model exists in cache, False otherwise
         """
-        import os
         from pathlib import Path
 
         # Special case: string_only has no model
