@@ -11,27 +11,14 @@ Automatically transfer your YouTube playlists to Spotify with **AI-powered seman
 
 ## Features
 
-- ✅ **Semantic Similarity Matching** - AI-powered track matching with 5 model options (from 60MB to 420MB)
-- ✅ **Multiple Model Support** - Choose from 5 semantic matching models or string-only mode
-- ✅ **Web UI Interface** - Beautiful browser-based interface with 4-step workflow
-- ✅ **Settings UI** - Configure API keys and model selection directly in the web interface
-- ✅ **Interactive Track Preview** - Click any Spotify match to preview with embedded player and lyrics, or click YouTube title to watch video
-- ✅ **Track Selection** - Review and remove tracks before creating playlist
-- ✅ **Per-Playlist Visibility Control** - Set public/private per playlist, overriding global defaults
-- ✅ **Custom Cover Images** - Upload your own playlist cover art (JPEG/PNG, max 256KB, 300x300+ recommended; PNGs auto-converted to JPEG)
+- ✅ **Semantic Matching** - AI-powered track matching with multiple model options or string-only mode
+- ✅ **Web UI + CLI** - Browser-based workflow plus an interactive command-line tool
+- ✅ **Settings UI** - Configure API keys and model selection from the web interface
+- ✅ **Preview + Select** - Preview matches with Spotify audio/lyrics and choose which tracks to include
+- ✅ **Playlist Customization** - Per-playlist visibility, description, and custom cover images (PNG auto-converted to JPEG)
 - ✅ **Max Videos Limit** - Cap how many playlist videos are fetched and processed
-- ✅ **Custom Descriptions** - Write personalized playlist descriptions
-- ✅ **Graceful Exit** - Exit the application cleanly from the UI
-- ✅ **CLI Interface** - Interactive command-line tool
-- ✅ **Batch Processing** - Handle playlists with 100+ tracks efficiently
-- ✅ Intelligent title parsing and matching
-- ✅ Multiple search query strategies for better matches
-- ✅ Confidence scoring for match quality
-- ✅ Detailed logging of transfer process
-- ✅ Handles deleted/private and malformed playlist items gracefully
-- ✅ Rate limit handling with automatic delays
-- ✅ OAuth authentication for Spotify
-- ✅ **Python 3.13 compatible**
+- ✅ **Robust Fetching** - Skips deleted/private or malformed playlist items gracefully
+- ✅ **Spotify OAuth** - Secure authentication flow with cached credentials
 
 ## Prerequisites
 
