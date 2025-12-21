@@ -5,7 +5,7 @@ Main script to transfer YouTube playlist to Spotify
 import logging
 import sys
 import os
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple
 from datetime import datetime
 
 # Import our modules
@@ -96,7 +96,7 @@ class PlaylistTransfer:
         logger.info(f"✓ Found {len(videos)} videos")
         return playlist_info, videos
     
-    def match_tracks(self, videos: List[Dict], progress_callback=None) -> List[Tuple[Dict, Dict, str]]:
+    def match_tracks(self, videos: List[Dict], progress_callback=None, cancel_check=None) -> List[Tuple[Dict, Dict, str]]:
         """
         Match YouTube videos to Spotify tracks.
 
@@ -115,6 +115,9 @@ class PlaylistTransfer:
         total_videos = len(videos)
 
         for i, video in enumerate(videos, 1):
+            if cancel_check and cancel_check():
+                logger.info("Matching cancelled by user.")
+                return matches
             video_title = video['title']
             logger.info(f"\n[{i}/{total_videos}] YouTube: {video_title}")
 
