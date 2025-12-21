@@ -212,10 +212,28 @@ class SpotifyHandler:
         """
         try:
             import base64
+            from io import BytesIO
+            from PIL import Image
 
-            # Read and encode image
-            with open(image_path, 'rb') as image_file:
-                image_data = base64.b64encode(image_file.read()).decode('utf-8')
+            image_bytes = None
+
+            with Image.open(image_path) as img:
+                if img.format == 'JPEG':
+                    with open(image_path, 'rb') as image_file:
+                        image_bytes = image_file.read()
+                else:
+                    rgb = img.convert('RGB')
+                    buffer = BytesIO()
+                    rgb.save(buffer, format='JPEG', quality=95)
+                    image_bytes = buffer.getvalue()
+
+            max_size = 256 * 1024
+            if len(image_bytes) > max_size:
+                size_kb = len(image_bytes) / 1024
+                logger.error(f"Cover image too large after conversion: {size_kb:.1f}KB (max 256KB)")
+                return False
+
+            image_data = base64.b64encode(image_bytes).decode('utf-8')
 
             # Upload to Spotify
             self.sp.playlist_upload_cover_image(playlist_id, image_data)
