@@ -171,7 +171,8 @@ class PlaylistTransfer:
         playlist_name: str,
         matches: List[Tuple[Dict, Dict, str]],
         include_low_confidence: bool = True,
-        description: str = ''
+        description: str = '',
+        create_public_playlists: bool = False
     ) -> str:
         """
         Create Spotify playlist and add matched tracks.
@@ -181,6 +182,7 @@ class PlaylistTransfer:
             matches: List of match tuples from match_tracks()
             include_low_confidence: Whether to include low confidence matches
             description: Playlist description
+            create_public_playlists: Whether to create a public playlist
             
         Returns:
             Spotify playlist ID
@@ -204,7 +206,7 @@ class PlaylistTransfer:
         playlist_id = self.spotify.create_playlist(
             name=playlist_name,
             description=description,
-            public=False  # Private by default
+            public=create_public_playlists
         )
         
         if not playlist_id:
@@ -227,7 +229,8 @@ class PlaylistTransfer:
         youtube_playlist_url: str,
         spotify_playlist_name: str = None,
         include_low_confidence: bool = True,
-        max_videos: int = None
+        max_videos: int = None,
+        create_public_playlists: bool = False
     ) -> str:
         """
         Complete transfer from YouTube to Spotify.
@@ -237,6 +240,7 @@ class PlaylistTransfer:
             spotify_playlist_name: Name for Spotify playlist (uses YouTube name if None)
             include_low_confidence: Include low confidence matches
             max_videos: Optional maximum number of videos to fetch
+            create_public_playlists: Whether to create a public playlist
             
         Returns:
             Spotify playlist URL
@@ -269,7 +273,8 @@ class PlaylistTransfer:
                 playlist_name=spotify_playlist_name,
                 matches=matches,
                 include_low_confidence=include_low_confidence,
-                description=description
+                description=description,
+                create_public_playlists=create_public_playlists
             )
             
             playlist_url = self.spotify.get_playlist_url(playlist_id)
@@ -355,7 +360,8 @@ def main():
             youtube_playlist_url=youtube_url,
             spotify_playlist_name=spotify_name,
             include_low_confidence=include_low_confidence,
-            max_videos=settings.get('max_videos')
+            max_videos=settings.get('max_videos'),
+            create_public_playlists=settings.get('create_public_playlists', False)
         )
         
         print(f"\n✓ Success! Your playlist is ready:")
