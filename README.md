@@ -18,7 +18,7 @@ Automatically transfer your YouTube playlists to Spotify with **AI-powered seman
 - ✅ **Interactive Track Preview** - Click any Spotify match to preview with embedded player and lyrics, or click YouTube title to watch video
 - ✅ **Track Selection** - Review and remove tracks before creating playlist
 - ✅ **Per-Playlist Visibility Control** - Set public/private per playlist, overriding global defaults
-- ✅ **Custom Cover Images** - Upload your own playlist cover art (JPEG, 4KB-256KB)
+- ✅ **Custom Cover Images** - Upload your own playlist cover art (JPEG/PNG, max 256KB, 300x300+ recommended)
 - ✅ **Custom Descriptions** - Write personalized playlist descriptions
 - ✅ **Graceful Exit** - Exit the application cleanly from the UI
 - ✅ **CLI Interface** - Interactive command-line tool
@@ -31,7 +31,6 @@ Automatically transfer your YouTube playlists to Spotify with **AI-powered seman
 - ✅ Rate limit handling with automatic delays
 - ✅ OAuth authentication for Spotify
 - ✅ **Python 3.13 compatible**
-- ✅ **Comprehensive test suite** - 156+ tests covering all functionality
 
 ## Prerequisites
 
@@ -122,10 +121,12 @@ The app will automatically open in your default browser at `http://localhost:786
 1. **Step 1**: Enter YouTube playlist URL → Click "Fetch Tracks"
    - First use: Semantic matching model downloads automatically (60MB-420MB depending on model selected, one-time)
    - Subsequent uses: Model loads from cache instantly
+   - Click the fetch button again during processing to cancel and restart
 2. **Step 2** (appears after fetching): Review matched tracks in the interactive table
    - Click **Spotify Match** to preview track with embedded player and lyrics
    - Click **YouTube Title** to watch the original video
    - Uncheck any tracks you don't want
+   - Use **Fetch Again** to restart with a new playlist or settings
 3. **Step 3**: (Optional) Upload cover image, customize name and description
    - (Optional) Check "🌐 Make this playlist public" to override the default visibility setting
 4. **Step 4**: Click "Create Spotify Playlist"
@@ -521,6 +522,7 @@ Make sure to comply with:
 - [gradio](https://github.com/gradio-app/gradio) - Web UI framework
 - [sentence-transformers](https://github.com/UKPLab/sentence-transformers) - Semantic similarity matching
 - [PyTorch](https://pytorch.org/) - Deep learning framework for embeddings
+- [colorthief](https://github.com/fengsp/color-thief-py) - Album art color extraction
 
 </details>
 
