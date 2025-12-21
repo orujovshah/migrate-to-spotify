@@ -65,12 +65,17 @@ class PlaylistTransfer:
             logger.error(f"✗ Failed to initialize Spotify API: {e}")
             raise
     
-    def fetch_youtube_playlist(self, playlist_id: str) -> Tuple[Dict, List[Dict]]:
+    def fetch_youtube_playlist(
+        self,
+        playlist_id: str,
+        max_videos: int = None
+    ) -> Tuple[Dict, List[Dict]]:
         """
         Fetch YouTube playlist information and videos.
         
         Args:
             playlist_id: YouTube playlist ID
+            max_videos: Optional maximum number of videos to fetch
             
         Returns:
             Tuple of (playlist_info, videos_list)
@@ -90,7 +95,7 @@ class PlaylistTransfer:
         # Get videos
         videos = self.youtube.get_playlist_videos(
             playlist_id,
-            max_results=None  # No limit
+            max_results=max_videos
         )
         
         logger.info(f"✓ Found {len(videos)} videos")
@@ -221,7 +226,8 @@ class PlaylistTransfer:
         self,
         youtube_playlist_url: str,
         spotify_playlist_name: str = None,
-        include_low_confidence: bool = True
+        include_low_confidence: bool = True,
+        max_videos: int = None
     ) -> str:
         """
         Complete transfer from YouTube to Spotify.
@@ -230,6 +236,7 @@ class PlaylistTransfer:
             youtube_playlist_url: YouTube playlist URL or ID
             spotify_playlist_name: Name for Spotify playlist (uses YouTube name if None)
             include_low_confidence: Include low confidence matches
+            max_videos: Optional maximum number of videos to fetch
             
         Returns:
             Spotify playlist URL
@@ -240,7 +247,10 @@ class PlaylistTransfer:
             logger.info(f"Processing YouTube playlist: {playlist_id}")
             
             # Fetch YouTube playlist
-            playlist_info, videos = self.fetch_youtube_playlist(playlist_id)
+            playlist_info, videos = self.fetch_youtube_playlist(
+                playlist_id,
+                max_videos=max_videos
+            )
             
             if not videos:
                 logger.error("No videos found in playlist")
@@ -344,7 +354,8 @@ def main():
         playlist_url = transfer.transfer(
             youtube_playlist_url=youtube_url,
             spotify_playlist_name=spotify_name,
-            include_low_confidence=include_low_confidence
+            include_low_confidence=include_low_confidence,
+            max_videos=settings.get('max_videos')
         )
         
         print(f"\n✓ Success! Your playlist is ready:")
