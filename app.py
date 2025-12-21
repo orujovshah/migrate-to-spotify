@@ -389,7 +389,8 @@ def fetch_tracks(
         tracks_data = []
         state_data = {
             'playlist_info': playlist_info,
-            'matches': []
+            'matches': [],
+            'matches_by_id': {}
         }
 
         for i, (video, track, status) in enumerate(matches):
@@ -403,21 +404,24 @@ def fetch_tracks(
                 # Column 3: Confidence Label
                 confidence = "✓ High" if status == 'matched' else "? Low"
 
-                # Row Structure: [Selected, Col 1, Col 2, Col 3]
+                # Row Structure: [Selected, Col 1, Col 2, Col 3, Match ID]
                 tracks_data.append([
                     True,  # Checkbox
                     video_title,  # YouTube Title
                     track_info,  # Spotify Match
-                    confidence  # Confidence
+                    confidence,  # Confidence
+                    i  # Match ID for stable mapping
                 ])
 
                 # Save full objects to state for the click handler
-                state_data['matches'].append({
+                match_entry = {
                     'index': i,
                     'video': video,
                     'track': track,
                     'status': status
-                })
+                }
+                state_data['matches'].append(match_entry)
+                state_data['matches_by_id'][i] = match_entry
 
         # Calculate Stats
         total = len(matches)
@@ -602,7 +606,15 @@ def update_lyrics_modal(content: str) -> Tuple[str, str, str, dict]:
     """Update lyrics preview with content"""
     return "", "", content, gr.update(visible=True)
 
-def on_track_table_click(state_dict: dict, evt: gr.SelectData):
+def _normalize_table_rows(tracks_dataframe):
+    if tracks_dataframe is None:
+        return []
+    if hasattr(tracks_dataframe, 'values'):
+        return tracks_dataframe.values.tolist()
+    return tracks_dataframe
+
+
+def on_track_table_click(state_dict: dict, tracks_dataframe, evt: gr.SelectData):
     """
     Handle clicks on the tracks table with a delayed spinner.
     The spinner is sent immediately but remains invisible via CSS for 0.5s.
@@ -625,11 +637,22 @@ def on_track_table_click(state_dict: dict, evt: gr.SelectData):
     if row_idx < 0 or col_idx < 0:
         return
 
-    matches = state_dict['matches']
-    if row_idx >= len(matches):
+    rows = _normalize_table_rows(tracks_dataframe)
+    if row_idx >= len(rows):
+        return
+    row = rows[row_idx]
+    if len(row) < 5:
         return
 
-    match = matches[row_idx]
+    match_id = row[4]
+    if match_id is None:
+        return
+
+    matches_by_id = state_dict.get('matches_by_id', {})
+    try:
+        match = matches_by_id[int(match_id)]
+    except (KeyError, TypeError, ValueError):
+        return
 
     # Shared CSS for delayed visibility
     # This animation keeps opacity at 0 for 0.5s, then sets it to 1
@@ -797,23 +820,18 @@ def create_playlist(
         # Get selected tracks from dataframe
         selected_indices = []
 
-        if tracks_dataframe is not None and len(tracks_dataframe) > 0:
+        rows = _normalize_table_rows(tracks_dataframe)
+        if rows:
             # Handle both list and DataFrame types
             try:
-                # Try to convert to list if it's a DataFrame
-                if hasattr(tracks_dataframe, 'values'):
-                    # It's a pandas DataFrame
-                    dataframe_list = tracks_dataframe.values.tolist()
-                else:
-                    # It's already a list
-                    dataframe_list = tracks_dataframe
-
-                for i, row in enumerate(dataframe_list):
+                for row in rows:
                     # Check if selected (first column is checkbox)
-                    if row[0]:  # Truthy check handles True, 'True', 1, etc.
-                        selected_indices.append(i)
+                    if row and row[0]:  # Truthy check handles True, 'True', 1, etc.
+                        match_id = row[4] if len(row) > 4 else None
+                        if match_id is not None:
+                            selected_indices.append(match_id)
 
-                logger.info(f"Processing {len(dataframe_list)} tracks: {len(selected_indices)} selected, {len(dataframe_list) - len(selected_indices)} unchecked")
+                logger.info(f"Processing {len(rows)} tracks: {len(selected_indices)} selected, {len(rows) - len(selected_indices)} unchecked")
 
             except Exception as e:
                 logger.error(f"Error processing dataframe: {e}")
@@ -829,7 +847,13 @@ def create_playlist(
             )
 
         # Filter matches to only selected ones
-        selected_matches = [state_dict['matches'][i] for i in selected_indices]
+        matches_by_id = state_dict.get('matches_by_id', {})
+        selected_matches = []
+        for match_id in selected_indices:
+            try:
+                selected_matches.append(matches_by_id[int(match_id)])
+            except (KeyError, TypeError, ValueError):
+                logger.warning(f"Skipping unknown match id: {match_id}")
 
         # Build track IDs list
         track_ids = [match['track']['id'] for match in selected_matches]
@@ -1465,6 +1489,19 @@ def create_ui():
         box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.1) !important;
         outline: none !important;
     }
+
+    /* Hide internal Match ID column used for stable row mapping */
+    #tracks-table table th:nth-child(5),
+    #tracks-table table td:nth-child(5) {
+        display: none;
+    }
+
+    /* Make Confidence column completely non-interactive */
+    #tracks-table table th:nth-child(4),
+    #tracks-table table td:nth-child(4) {
+        pointer-events: none;
+        user-select: none;
+    }
     """
 
     with gr.Blocks(
@@ -1707,12 +1744,14 @@ Once processing is complete, this section will show:
                 """)
 
                 tracks_table = gr.Dataframe(
-                    headers=["Include", "YouTube Title", "Spotify Match", "Confidence"],
-                    datatype=["bool", "str", "str", "str"],
-                    col_count=(4, "fixed"),
+                    headers=["Include", "YouTube Title", "Spotify Match", "Confidence", "Match ID"],
+                    datatype=["bool", "str", "str", "str", "number"],
+                    col_count=(5, "fixed"),
                     interactive=True,
+                    static_columns=[1, 2, 3, 4],
                     wrap=True,
-                    label="Matched Tracks (uncheck any you don't want)"
+                    label="Matched Tracks (uncheck any you don't want)",
+                    elem_id="tracks-table"
                 )
 
         # Informational text
@@ -1835,7 +1874,7 @@ Once processing is complete, this section will show:
         # Connect track table cell clicks to show modals
         tracks_table.select(
             on_track_table_click,
-            inputs=[state],
+            inputs=[state, tracks_table],
             outputs=[spotify_preview, youtube_preview, lyrics_preview, spotify_lyrics_row],
             show_progress=False
         )
