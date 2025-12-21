@@ -8,11 +8,15 @@ import logging
 import sys
 import os
 import requests
-from typing import Tuple, Dict, List, Optional
+import threading
+from typing import Tuple, Dict, List, Optional, Generator
 from datetime import datetime
 
 from transfer import PlaylistTransfer
 from utils import extract_playlist_id
+    
+from io import BytesIO
+from colorthief import ColorThief
 
 # Create logs directory if it doesn't exist
 os.makedirs('logs', exist_ok=True)
@@ -27,6 +31,10 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+# Track per-session fetch cancellation signals.
+_FETCH_CANCEL_EVENTS: Dict[str, threading.Event] = {}
+_FETCH_CANCEL_LOCK = threading.Lock()
 
 
 # Model size information
@@ -207,110 +215,174 @@ def validate_cover_image(image_path: str) -> Tuple[bool, str]:
     except Exception as e:
         return False, f"Failed to validate image: {str(e)}"
 
+def _get_session_id(request: Optional[gr.Request]) -> Optional[str]:
+    return getattr(request, "session_hash", None) if request else None
+
+def _cancel_current_fetch(request: Optional[gr.Request]) -> None:
+    session_id = _get_session_id(request)
+    if not session_id:
+        return
+    with _FETCH_CANCEL_LOCK:
+        cancel_event = _FETCH_CANCEL_EVENTS.get(session_id)
+        if cancel_event:
+            cancel_event.set()
+
+def _start_fetch_run(request: Optional[gr.Request]) -> threading.Event:
+    cancel_event = threading.Event()
+    session_id = _get_session_id(request)
+    if not session_id:
+        return cancel_event
+    with _FETCH_CANCEL_LOCK:
+        previous_event = _FETCH_CANCEL_EVENTS.get(session_id)
+        if previous_event:
+            previous_event.set()
+        _FETCH_CANCEL_EVENTS[session_id] = cancel_event
+    return cancel_event
+
+def prepare_fetch(request: gr.Request = None) -> Tuple[str, List, dict, str, gr.update, gr.update, gr.update, gr.update]:
+    """
+    Cancel any in-flight fetch and immediately reset the UI.
+    Runs outside the queue so cancellation can happen immediately.
+    """
+    _cancel_current_fetch(request)
+    return (
+        "⏳ Fetching tracks...",
+        [],
+        {},
+        "",
+        gr.update(visible=True),
+        gr.update(visible=False),
+        gr.update(visible=True, value="⏳ Fetching... Click to restart", interactive=True),
+        gr.update(visible=False)
+    )
 
 def fetch_tracks(
-    youtube_url: str,
-    include_low_confidence: bool,
-    progress=gr.Progress()
-) -> Tuple[str, List, dict, str, gr.update, gr.update]:
+        youtube_url: str,
+        include_low_confidence: bool,
+        progress=gr.Progress(),
+        request: gr.Request = None
+) -> Generator[Tuple[str, List, dict, str, gr.update, gr.update, gr.update, gr.update], None, None]:
     """
     Fetch and match tracks from YouTube playlist.
-
-    Returns:
-        Tuple of (status_message, tracks_dataframe, state_dict, statistics, placeholder_visibility, content_visibility)
+    includes progress bar and standard table structure.
     """
     try:
+        cancel_event = _start_fetch_run(request)
+
+        def is_cancelled() -> bool:
+            return cancel_event.is_set()
+
+        # 1. Immediate Reset: Clear UI instantly on click
+        yield (
+            "⏳ Fetching tracks...",  # Show status
+            [],  # Clear table
+            {},  # Clear state
+            "",  # Clear stats
+            gr.update(visible=True),  # Show loading placeholder
+            gr.update(visible=False),  # Hide content
+            gr.update(visible=True, value="⏳ Fetching... Click to restart", interactive=True),  # Allow restart while running
+            gr.update(visible=False)
+        )
+
+        if is_cancelled():
+            return
+
         # Validate input
         if not youtube_url or not youtube_url.strip():
-            return (
+            yield (
                 "❌ Error: Please enter a YouTube playlist URL or ID",
-                [],
-                {},
-                "",
-                gr.update(visible=True),   # Show placeholder
-                gr.update(visible=False)   # Hide content
+                [], {}, "", gr.update(visible=True), gr.update(visible=False),
+                gr.update(visible=True, value="🔍 Fetch Tracks", interactive=True),
+                gr.update(visible=False)
             )
+            return
 
         progress(0.1, desc="Initializing...")
 
-        # Load configuration
+        if is_cancelled():
+            return
+
+        # Load settings
         settings = _get_settings()
-
-        # Check if settings exist
         if settings is None:
-            return (
-                "❌ Error: API keys not configured.\n\n"
-                "Please configure your YouTube and Spotify API keys in the Settings section above before fetching tracks.",
-                [],
-                {},
-                "",
-                gr.update(visible=True),   # Show placeholder
-                gr.update(visible=False)   # Hide content
+            yield (
+                "❌ Error: API keys not configured. Please check Settings.",
+                [], {}, "", gr.update(visible=True), gr.update(visible=False),
+                gr.update(visible=True, value="🔍 Fetch Tracks", interactive=True),
+                gr.update(visible=False)
             )
+            return
 
-        # Initialize transfer with settings
+        if is_cancelled():
+            return
+
+        # Initialize transfer
         transfer, error = _initialize_transfer(settings)
         if error:
-            return (
-                error,
-                [],
-                {},
-                "",
-                gr.update(visible=True),   # Show placeholder
-                gr.update(visible=False)   # Hide content
+            yield (
+                error, [], {}, "", gr.update(visible=True), gr.update(visible=False),
+                gr.update(visible=True, value="🔍 Fetch Tracks", interactive=True),
+                gr.update(visible=False)
             )
+            return
 
         progress(0.2, desc="Fetching YouTube playlist...")
 
-        # Extract playlist ID
-        playlist_id = extract_playlist_id(youtube_url)
+        if is_cancelled():
+            return
 
-        # Fetch YouTube playlist
+        # Get Playlist
+        playlist_id = extract_playlist_id(youtube_url)
         try:
             playlist_info, videos = transfer.fetch_youtube_playlist(playlist_id)
         except Exception as e:
-            return (
-                f"❌ Error: Could not fetch YouTube playlist\n\nDetails: {str(e)}",
-                [],
-                {},
-                "",
-                gr.update(visible=True),   # Show placeholder
-                gr.update(visible=False)   # Hide content
+            yield (
+                f"❌ Error: Could not fetch YouTube playlist\n{str(e)}",
+                [], {}, "", gr.update(visible=True), gr.update(visible=False),
+                gr.update(visible=True, value="🔍 Fetch Tracks", interactive=True),
+                gr.update(visible=False)
             )
+            return
+
+        if is_cancelled():
+            return
 
         if not videos:
-            return (
+            yield (
                 "❌ Error: No videos found in playlist",
-                [],
-                {},
-                "",
-                gr.update(visible=True),   # Show placeholder
-                gr.update(visible=False)   # Hide content
+                [], {}, "", gr.update(visible=True), gr.update(visible=False),
+                gr.update(visible=True, value="🔍 Fetch Tracks", interactive=True),
+                gr.update(visible=False)
             )
+            return
 
-        progress(0.4, desc=f"Found {len(videos)} videos. Starting track matching...")
+        progress(0.4, desc=f"Found {len(videos)} videos. Starting matching...")
 
-        # Define progress callback for per-track updates
+        # Progress callback wrapper
         def update_matching_progress(current, total, title):
-            # Calculate progress from 0.4 to 0.9 (50% of the bar)
-            base_progress = 0.4
-            track_progress = (current / total) * 0.5
-            overall_progress = base_progress + track_progress
+            if is_cancelled():
+                return
+            # Map matching progress (0% to 100%) to overall bar (40% to 90%)
+            base = 0.4
+            scale = 0.5
+            overall = base + ((current / total) * scale)
+            short_title = title[:40] + "..." if len(title) > 40 else title
+            progress(overall, desc=f"Matching {current}/{total}: {short_title}")
 
-            # Truncate long titles for display
-            short_title = title[:60] + "..." if len(title) > 60 else title
-            progress(
-                overall_progress,
-                desc=f"Matching track {current}/{total}: {short_title}"
-            )
+        # Match tracks
+        matches = transfer.match_tracks(
+            videos,
+            progress_callback=update_matching_progress,
+            cancel_check=is_cancelled
+        )
 
-        # Match tracks with progress callback
-        matches = transfer.match_tracks(videos, progress_callback=update_matching_progress)
+        if is_cancelled():
+            return
 
         progress(0.95, desc="Finalizing matches...")
-        progress(1.0, desc="Complete!")
 
-        # Build dataframe for track selection
+        # 2. Build Table Data (Restored Structure)
+        # Structure: [Checkbox, YouTube Title, Spotify Match, Confidence]
         tracks_data = []
         state_data = {
             'playlist_info': playlist_info,
@@ -318,20 +390,25 @@ def fetch_tracks(
         }
 
         for i, (video, track, status) in enumerate(matches):
-            video_title = video['title']
-
             if status == 'matched' or (status == 'low_confidence' and include_low_confidence):
+                # Column 1: YouTube Title
+                video_title = video['title']
+
+                # Column 2: Spotify Track Info
                 track_info = f"{', '.join([a['name'] for a in track['artists']])} - {track['name']}"
+
+                # Column 3: Confidence Label
                 confidence = "✓ High" if status == 'matched' else "? Low"
 
+                # Row Structure: [Selected, Col 1, Col 2, Col 3]
                 tracks_data.append([
-                    True,  # Selected by default
-                    video_title,
-                    track_info,
-                    confidence
+                    True,  # Checkbox
+                    video_title,  # YouTube Title
+                    track_info,  # Spotify Match
+                    confidence  # Confidence
                 ])
 
-                # Store in state
+                # Save full objects to state for the click handler
                 state_data['matches'].append({
                     'index': i,
                     'video': video,
@@ -339,121 +416,66 @@ def fetch_tracks(
                     'status': status
                 })
 
-        # Calculate statistics
+        # Calculate Stats
         total = len(matches)
-        high_conf = sum(1 for m in matches if m[2] == 'matched')
-        low_conf = sum(1 for m in matches if m[2] == 'low_confidence')
-        not_found = sum(1 for m in matches if m[2] == 'not_found')
+        high = sum(1 for m in matches if m[2] == 'matched')
+        low = sum(1 for m in matches if m[2] == 'low_confidence')
+        missing = sum(1 for m in matches if m[2] == 'not_found')
 
-        stats = f"""
+        stats_text = f"""
 ### Fetched Tracks
-
-- **Total Videos:** {total}
-- **High Confidence Matches:** {high_conf} ({high_conf/total*100:.1f}%)
-- **Low Confidence Matches:** {low_conf} ({low_conf/total*100:.1f}%)
-- **Not Found:** {not_found} ({not_found/total*100:.1f}%)
-
-**📝 Review the tracks below and uncheck any you don't want to include.**
+- **Total:** {total}
+- **High Confidence:** {high}
+- **Low Confidence:** {low}
+- **Not Found:** {missing}
 """
 
         status_msg = f"""
-## ✅ Tracks Fetched Successfully!
-
-**YouTube Playlist:** {playlist_info['title']}
-**Channel:** {playlist_info['channel']}
-**Matched Tracks:** {len(tracks_data)}
-
-**Next Steps:**
-1. Review the tracks below
-2. Uncheck any tracks you don't want
-3. (Optional) Upload a cover image
-4. (Optional) Edit the playlist description
-5. Click "Create Spotify Playlist"
+## ✅ Success!
+**Playlist:** {playlist_info['title']}
+**Matched:** {len(tracks_data)} tracks
 """
 
-        return (
+        progress(1.0, desc="Done!")
+
+        # Final Yield
+        yield (
             status_msg,
             tracks_data,
             state_data,
-            stats,
+            stats_text,
             gr.update(visible=False),  # Hide placeholder
-            gr.update(visible=True)    # Show content
+            gr.update(visible=True),  # Show content
+            gr.update(visible=False),
+            gr.update(visible=True, value="🔄 Fetch Again", interactive=True)  # Show fetch again after display
         )
 
     except Exception as e:
-        logger.exception("Unexpected error during fetch")
-        return (
-            f"❌ Unexpected Error: {str(e)}\n\nPlease check the log file for details.",
-            [],
-            {},
-            "",
-            gr.update(visible=True),   # Show placeholder
-            gr.update(visible=False)   # Hide content
+        yield (
+            f"❌ Unexpected Error: {str(e)}",
+            [], {}, "", gr.update(visible=True), gr.update(visible=False),
+            gr.update(visible=True, value="🔍 Fetch Tracks", interactive=True),
+            gr.update(visible=False)
         )
 
+def rgb_to_hex(rgb):
+    """Convert (R, G, B) tuple to hex string."""
+    return '#{:02x}{:02x}{:02x}'.format(*rgb)
 
-def show_track_preview(track_id: str, track: dict) -> str:
-    """
-    Generate HTML preview modal for a Spotify track with iframe + lyrics panel (lrclib.net).
+def adjust_brightness(rgb, factor=0.85):
+    """Slightly darken or brighten an RGB color by factor."""
+    r, g, b = rgb
+    r = min(255, max(0, int(r * factor)))
+    g = min(255, max(0, int(g * factor)))
+    b = min(255, max(0, int(b * factor)))
+    return (r, g, b)
 
-    Args:
-        track_id: Spotify track ID to preview
-        track: Spotify track object with 'name' and 'artists' fields
-
-    Returns:
-        HTML string with Spotify embedded player and lyrics
-    """
-    try:
-        track_name = track.get("name", "")
-        # Extract first artist name from artists array
-        artists = track.get("artists", [])
-        artist_name = artists[0]['name'] if artists else ""
-
-        # Fetch lyrics from lrclib.net
-        lyrics = "Lyrics not found"
-        try:
-            response = requests.get(
-                "https://lrclib.net/api/search",
-                params={"track_name": track_name, "artist_name": artist_name},
-                timeout=5
-            )
-            response.raise_for_status()
-            data = response.json()
-
-            # API returns array of lyrics records
-            if data and len(data) > 0:
-                first_result = data[0]
-                # Try plainLyrics first, fall back to syncedLyrics
-                lyrics = first_result.get("plainLyrics") or first_result.get("syncedLyrics") or "Lyrics not available"
-            else:
-                lyrics = "No lyrics found for this track"
-        except Exception as e:
-            logger.error(f"Error fetching lyrics: {e}")
-            lyrics = f"Could not load lyrics: {str(e)}"
-
-        # Return HTML with two columns: Spotify iframe left, lyrics right
-        html = f"""
-        <div style="display: flex; gap: 20px;">
-            <!-- Spotify Player -->
-            <div style="flex: 1;">
-                <iframe 
-                    src="https://open.spotify.com/embed/track/{track_id}" 
-                    width="100%" height="380" frameborder="0" 
-                    allowtransparency="true" allow="encrypted-media">
-                </iframe>
-            </div>
-
-            <!-- Lyrics Panel -->
-            <div style="flex: 1; max-height: 350px; overflow-y: auto; padding: 10px;
-                        border: 1px solid #1db954; border-radius: 8px; background: #1db954;">
-                <pre style="white-space: pre-wrap; color: white;">{lyrics}</pre>
-            </div>
-        </div>
-        """
-        return html
-
-    except Exception as e:
-        return f"<div style='padding: 20px; color: #dc2626;'>❌ Error: {str(e)}</div>"
+def get_contrast_text_color(rgb):
+    """Return 'white' or 'black' depending on brightness of RGB."""
+    r, g, b = rgb
+    # Calculate relative luminance
+    luminance = (0.2126*r + 0.7152*g + 0.0722*b) / 255
+    return 'black' if luminance > 0.6 else 'white'
 
 def generate_youtube_preview(video_id: str, video_info: dict) -> str:
     """
@@ -484,72 +506,232 @@ def generate_youtube_preview(video_id: str, video_info: dict) -> str:
     except Exception as e:
         return f"<div style='padding: 20px; color: #dc2626;'>❌ Error: {str(e)}</div>"
 
-def on_track_table_click(state_dict: dict, evt: gr.SelectData) -> Tuple[str, str]:
+
+def show_track_preview(track_id: str, track: dict) -> Tuple[str, str]:
     """
-    Handle clicks on the tracks table to show appropriate preview.
+    Generate separate Spotify iframe and lyrics HTML.
+
     Args:
-        state_dict: State containing matched tracks
-        evt: Gradio SelectData event with index [row, col]
+        track_id: Spotify track ID
+        track: Spotify track object with 'name', 'artists', 'album'
+
     Returns:
-        Tuple of (spotify_modal_content, youtube_modal_content)
+        Tuple of (spotify_iframe_html, lyrics_html)
     """
+    try:
+        track_name = track.get("name", "")
+        artists = track.get("artists", [])
+        artist_name = artists[0]['name'] if artists else ""
+        album_images = track.get("album", {}).get("images", [])
+        album_url = album_images[0]["url"] if album_images else None
+
+        # Extract dominant color from album art
+        dominant_color = (29, 185, 84)  # fallback green
+        if album_url:
+            try:
+                img_response = requests.get(album_url, timeout=5)
+                img_response.raise_for_status()
+                color_thief = ColorThief(BytesIO(img_response.content))
+                dominant_color = color_thief.get_color(quality=1)
+                # Slightly adjust brightness for UI
+                dominant_color = adjust_brightness(dominant_color, 0.85)
+            except Exception:
+                pass
+
+        # Decide text color
+        text_color = get_contrast_text_color(dominant_color)
+        bg_color_hex = rgb_to_hex(dominant_color)
+
+        # Spotify iframe HTML
+        spotify_html = f"""
+        <iframe 
+            src="https://open.spotify.com/embed/track/{track_id}" 
+            width="100%" height="380" frameborder="0" 
+            allowtransparency="true" allow="encrypted-media">
+        </iframe>
+        """
+
+        # Fetch lyrics from lrclib.net
+        lyrics = "Lyrics not found"
+        try:
+            response = requests.get(
+                "https://lrclib.net/api/search",
+                params={"track_name": track_name, "artist_name": artist_name},
+                timeout=5
+            )
+            response.raise_for_status()
+            data = response.json()
+            if data and len(data) > 0:
+                first_result = data[0]
+                lyrics = first_result.get("plainLyrics") or first_result.get("syncedLyrics") or "Lyrics not available"
+            else:
+                lyrics = "No lyrics found for this track"
+        except Exception:
+            lyrics = "Could not load lyrics"
+
+        # Lyrics panel HTML
+        lyrics_html = f"""
+        <div style="max-height: 350px; overflow-y: auto; padding: 15px;
+                    border: 1px solid {bg_color_hex}; border-radius: 8px; 
+                    background: {bg_color_hex};">
+            <pre style="white-space: pre-wrap; color: {text_color}; margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;">{lyrics}</pre>
+        </div>
+        """
+
+        return spotify_html, lyrics_html
+
+    except Exception as e:
+        error_html = f"<div style='padding: 20px; color: #dc2626;'>❌ Error: {str(e)}</div>"
+        return error_html, error_html
+
+
+def update_spotify_modal(content: str) -> Tuple[str, str, str, dict]:
+    """Update Spotify preview with content and show row"""
+    return content, "", "", gr.update(visible=True)
+
+
+def update_youtube_modal(content: str) -> Tuple[str, str, str, dict]:
+    """Update YouTube preview with content and hide Spotify/lyrics row"""
+    return "", content, "", gr.update(visible=False)
+
+
+def update_lyrics_modal(content: str) -> Tuple[str, str, str, dict]:
+    """Update lyrics preview with content"""
+    return "", "", content, gr.update(visible=True)
+
+def on_track_table_click(state_dict: dict, evt: gr.SelectData):
+    """
+    Handle clicks on the tracks table with a delayed spinner.
+    The spinner is sent immediately but remains invisible via CSS for 0.5s.
+    """
+    # 1. Reset previews immediately on click
+    yield "", "", "", gr.update(visible=False)
+
+    # Basic validations
     if not state_dict or 'matches' not in state_dict:
-        return "", ""
+        return
     if not evt or not hasattr(evt, 'index'):
-        return "", ""
+        return
+    if not isinstance(evt.index, (list, tuple)) or len(evt.index) != 2:
+        return
+
     row_idx, col_idx = evt.index
+
+    if not isinstance(row_idx, int) or not isinstance(col_idx, int):
+        return
+    if row_idx < 0 or col_idx < 0:
+        return
+
     matches = state_dict['matches']
     if row_idx >= len(matches):
-        return "", ""
+        return
+
     match = matches[row_idx]
-    # Column 1: YouTube Title (index 1)
+
+    # Shared CSS for delayed visibility
+    # This animation keeps opacity at 0 for 0.5s, then sets it to 1
+    delayed_fade_in_css = """
+        @keyframes delayedFadeIn {
+            0% { opacity: 0; }
+            99% { opacity: 0; }
+            100% { opacity: 1; }
+        }
+    """
+
+    # --- Column 1: YouTube ---
     if col_idx == 1:
+        # YouTube Spinner with CSS Delay
+        youtube_spinner = f"""
+        <style>
+            {delayed_fade_in_css}
+            @keyframes spin {{
+                0% {{ transform: rotate(0deg); }}
+                100% {{ transform: rotate(360deg); }}
+            }}
+            .youtube-spinner-container {{
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                min-height: 400px;
+                /* Start hidden, show after 0.5s */
+                opacity: 0; 
+                animation: delayedFadeIn 0.1s linear 0.5s forwards; 
+            }}
+            .youtube-spinner {{
+                border: 4px solid #f3f3f3;
+                border-top: 4px solid #FF0000;
+                border-radius: 50%;
+                width: 50px;
+                height: 50px;
+                animation: spin 1s linear infinite;
+            }}
+        </style>
+        <div class="youtube-spinner-container">
+            <div class="youtube-spinner"></div>
+        </div>
+        """
+
+        # Yield the (initially invisible) spinner immediately
+        yield "", youtube_spinner, "", gr.update(visible=False)
+
+        # Generate content (blocking operation). If this finishes in <0.5s,
+        # the spinner above is replaced before it becomes visible.
         video_id = match['video']['video_id']
         youtube_content = generate_youtube_preview(video_id, match['video'])
-        return "", youtube_content
-    # Column 2: Spotify Match (index 2)
+
+        yield "", youtube_content, "", gr.update(visible=False)
+
+    # --- Column 2: Spotify ---
     elif col_idx == 2:
         if match['status'] != 'matched':
-            return "<div>This track was not matched to Spotify</div>", ""
+            no_match_content = "<div style='padding: 40px; text-align: center; color: #666;'>This track was not matched to Spotify</div>"
+            yield no_match_content, "", "", gr.update(visible=True)
+            return
+
+        # Spotify Spinner with CSS Delay
+        spotify_spinner = f"""
+        <style>
+            {delayed_fade_in_css}
+            @keyframes spin {{
+                0% {{ transform: rotate(0deg); }}
+                100% {{ transform: rotate(360deg); }}
+            }}
+            .spotify-lyrics-spinner-container {{
+                position: relative;
+                min-height: 400px;
+                /* Start hidden, show after 0.5s */
+                opacity: 0;
+                animation: delayedFadeIn 0.1s linear 0.5s forwards;
+            }}
+            .spotify-lyrics-spinner {{
+                position: absolute;
+                left: calc(100% - 25px);
+                top: calc(50% - 25px);
+                border: 4px solid #f3f3f3;
+                border-top: 4px solid #1DB954;
+                border-radius: 50%;
+                width: 50px;
+                height: 50px;
+                animation: spin 1s linear infinite;
+            }}
+        </style>
+        <div class="spotify-lyrics-spinner-container">
+            <div class="spotify-lyrics-spinner"></div>
+        </div>
+        """
+
+        # Yield the (initially invisible) spinner immediately
+        yield spotify_spinner, "", "", gr.update(visible=True)
+
+        # Load content
         track_id = match['track']['id']
-        spotify_content = show_track_preview(track_id, match['track'])
-        return spotify_content, ""
-    # Column 0 (checkbox) or 3 (confidence) - no preview
-    return "", ""
+        spotify_content, lyrics_content = show_track_preview(track_id, match['track'])
 
-def update_spotify_modal(content: str) -> Tuple[str, str]:
-    """Update Spotify modal with content and show it"""
-    if not content:
-        return "", ""
-    modal_html = f"""
-    <div id="spotify-modal" style="display: block; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5);">
-        <div style="background: white; margin: 5% auto; padding: 0; max-width: 500px; border-radius: 8px; position: relative;">
-            <button onclick="document.getElementById('spotify-modal').style.display='none'"
-                    style="position: absolute; right: 10px; top: 10px; background: none; border: none; font-size: 24px; cursor: pointer; z-index: 1001;">
-                ✕
-            </button>
-            <div id="spotify-modal-content">{content}</div>
-        </div>
-    </div>
-    """
-    return modal_html, ""
+        # Yield result
+        yield spotify_content, "", lyrics_content, gr.update(visible=True)
 
-def update_youtube_modal(content: str) -> Tuple[str, str]:
-    """Update YouTube modal with content and show it"""
-    if not content:
-        return "", ""
-    modal_html = f"""
-    <div id="youtube-modal" style="display: block; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5);">
-        <div style="background: white; margin: 5% auto; padding: 0; max-width: 700px; border-radius: 8px; position: relative;">
-            <button onclick="document.getElementById('youtube-modal').style.display='none'"
-                    style="position: absolute; right: 10px; top: 10px; background: none; border: none; font-size: 24px; cursor: pointer; z-index: 1001;">
-                ✕
-            </button>
-            <div id="youtube-modal-content">{content}</div>
-        </div>
-    </div>
-    """
-    return "", modal_html
+    else:
+        yield "", "", "", gr.update(visible=False)
 
 def create_playlist(
     spotify_name: str,
@@ -976,7 +1158,7 @@ def download_selected_model_with_progress(selected_model: str, progress=gr.Progr
         logger.info(f"Downloading model: {selected_model}")
 
         # Download model
-        model = SentenceTransformer(selected_model)
+        SentenceTransformer(selected_model)
 
         progress(1.0, desc="Download complete!")
         logger.info(f"✓ Model {selected_model} downloaded successfully")
@@ -1436,7 +1618,6 @@ Settings are saved locally and will be used for all future transfers.
                 delete_model_btn = gr.Button("🗑️ Delete Selected Model", size="sm", variant="stop")
 
             model_status_display = gr.Markdown("**Status:** Click button to check")
-            download_progress = gr.Markdown("", visible=False)
 
         gr.Markdown("---")
 
@@ -1462,6 +1643,13 @@ Settings are saved locally and will be used for all future transfers.
                     "🔍 Fetch Tracks",
                     variant="primary",
                     size="lg"
+                )
+
+                fetch_again_btn = gr.Button(
+                    "🔄 Fetch Again",
+                    variant="secondary",
+                    size="lg",
+                    visible=False
                 )
 
             with gr.Column(scale=1):
@@ -1490,7 +1678,7 @@ Settings are saved locally and will be used for all future transfers.
         gr.Markdown("---")
 
         # Step 2: Review and Select Tracks
-        with gr.Column(visible=True) as step2_section:
+        with gr.Column(visible=True):
             gr.Markdown("## Step 2: Review & Select Tracks")
 
             # Placeholder shown initially
@@ -1529,8 +1717,11 @@ Once processing is complete, this section will show:
         💡 **Tip:** Click on any **YouTube Title** to watch the video, or **Spotify Match** to preview the track with album art and audio!
         """)
         # Modal containers (hidden by default)
-        spotify_modal = gr.HTML(value="")
-        youtube_modal = gr.HTML(value="")
+        with gr.Row(visible=False) as spotify_lyrics_row:
+            spotify_preview = gr.HTML(label="Spotify Player")
+            lyrics_preview = gr.HTML(label="Lyrics")
+
+        youtube_preview = gr.HTML(label="YouTube Preview")
 
         gr.Markdown("---")
 
@@ -1608,17 +1799,42 @@ Once processing is complete, this section will show:
         )
 
         # Connect the fetch button
-        fetch_btn.click(
+        prepare_event = fetch_btn.click(
+            fn=prepare_fetch,
+            inputs=[],
+            outputs=[fetch_status, tracks_table, state, fetch_stats, step2_placeholder, step2_content, fetch_btn, fetch_again_btn],
+            queue=False,
+        )
+
+        prepare_event.then(
             fn=fetch_tracks,
             inputs=[youtube_input, include_low_conf],
-            outputs=[fetch_status, tracks_table, state, fetch_stats, step2_placeholder, step2_content],
+            outputs=[fetch_status, tracks_table, state, fetch_stats, step2_placeholder, step2_content, fetch_btn, fetch_again_btn],
+            show_progress="full",
+            trigger_mode="always_last",
+        )
+
+        prepare_again_event = fetch_again_btn.click(
+            fn=prepare_fetch,
+            inputs=[],
+            outputs=[fetch_status, tracks_table, state, fetch_stats, step2_placeholder, step2_content, fetch_btn, fetch_again_btn],
+            queue=False,
+        )
+
+        prepare_again_event.then(
+            fn=fetch_tracks,
+            inputs=[youtube_input, include_low_conf],
+            outputs=[fetch_status, tracks_table, state, fetch_stats, step2_placeholder, step2_content, fetch_btn, fetch_again_btn],
+            show_progress="full",
+            trigger_mode="always_last",
         )
 
         # Connect track table cell clicks to show modals
         tracks_table.select(
-            fn=on_track_table_click,
+            on_track_table_click,
             inputs=[state],
-            outputs=[spotify_modal, youtube_modal]
+            outputs=[spotify_preview, youtube_preview, lyrics_preview, spotify_lyrics_row],
+            show_progress=False
         )
 
         # Connect the create button
@@ -1776,6 +1992,7 @@ def main():
     app = create_ui()
 
     # Launch the app
+    app.queue()
     app.launch(
         server_name="0.0.0.0",  # Allow external access
         server_port=7860,
