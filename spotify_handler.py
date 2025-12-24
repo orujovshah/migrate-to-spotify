@@ -72,7 +72,8 @@ class SpotifyHandler:
     def search_track_best_match(
         self,
         queries: List[str],
-        youtube_title: str = ""
+        youtube_title: str = "",
+        match_threshold: float = 0.6
     ) -> Optional[Dict]:
         """
         Search Spotify with multiple queries and return best match using embeddings.
@@ -86,6 +87,7 @@ class SpotifyHandler:
         Args:
             queries: List of search query strings to try
             youtube_title: Original YouTube video title (for embedding matching)
+            match_threshold: Minimum similarity score for accepting a match
 
         Returns:
             Best matching track dictionary or None if no match above threshold
@@ -123,7 +125,7 @@ class SpotifyHandler:
         result = match_by_embeddings(
             youtube_title=youtube_title,
             spotify_tracks=all_candidates,
-            threshold=0.6
+            threshold=match_threshold
         )
 
         if result:
