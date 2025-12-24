@@ -105,6 +105,12 @@ The app will automatically open in your default browser at `http://localhost:786
 4. Click "Save Settings"
 5. (Optional) Check "🤖 Semantic Matching Model Status" to verify model download status
 
+**Model Management:**
+- **Check Model Status**: Use "🤖 Semantic Matching Model Status" in Settings to see which models are downloaded
+- **Pre-download Models**: Download models ahead of time (before fetching playlists) using the model download option in Settings
+- **Delete Models**: Free up disk space by deleting unused models through the Settings panel
+- **Model Storage**: Models are cached in `~/.cache/huggingface/` or `~/.cache/torch/` (60MB-420MB per model)
+
 **Workflow:**
 1. **Step 1**: Enter YouTube playlist URL → Click "Fetch Tracks"
    - First use: Semantic matching model downloads automatically (60MB-420MB depending on model selected, one-time)
@@ -211,7 +217,7 @@ The script uses an advanced multi-stage matching pipeline for optimal accuracy:
 ### Stage 3: AI-Powered Matching
 
 4. **Semantic Similarity Matching**: Uses sentence transformers for intelligent matching
-   - **Model Options**: 5 models available (paraphrase-MiniLM-L3-v2, all-MiniLM-L6-v2, all-MiniLM-L12-v2, all-mpnet-base-v2) or string-only mode
+   - **Model Options**: 5 matching options available - 4 sentence transformer models (paraphrase-MiniLM-L3-v2, all-MiniLM-L6-v2, all-MiniLM-L12-v2, all-mpnet-base-v2) and string-only mode
    - **Default Model**: all-mpnet-base-v2 (highest accuracy, ~420MB)
    - **Lightweight Models**: MiniLM variants available (60MB-120MB) for faster downloads and matching
    - **Method**: Encodes YouTube title and Spotify tracks into embeddings
@@ -252,7 +258,17 @@ Each transfer creates a single timestamped log file in the `logs/` directory:
 
 ```
 .
-├── app.py                     # Web UI application (Gradio)
+├── app.py                     # Web UI application entrypoint (Gradio)
+├── ui/                        # UI package (layout, flows, previews, fetch handlers)
+│   ├── __init__.py             # UI package marker
+│   ├── constants.py            # UI constants and text
+│   ├── fetch.py                # Fetch handlers + session control
+│   ├── fetch_payloads.py       # Fetch UI payload helpers
+│   ├── flows.py                # Settings/model/playlist flows
+│   ├── layout.py               # Gradio layout + wiring
+│   ├── preview.py              # Preview/modals and table click handling
+│   ├── services.py             # Settings + transfer helpers
+│   └── table_utils.py          # Table normalization helpers
 ├── transfer.py                # Main CLI script
 ├── config_manager.py          # Configuration management and persistence
 ├── youtube_handler.py         # YouTube API wrapper
@@ -510,6 +526,8 @@ Make sure to comply with:
 - [gradio](https://github.com/gradio-app/gradio) - Web UI framework
 - [sentence-transformers](https://github.com/UKPLab/sentence-transformers) - Semantic similarity matching
 - [PyTorch](https://pytorch.org/) - Deep learning framework for embeddings
+- [Pillow](https://python-pillow.org/) - Image processing for cover images
+- [tf-keras](https://github.com/keras-team/tf-keras) - TensorFlow Keras for model compatibility
 - [colorthief](https://github.com/fengsp/color-thief-py) - Album art color extraction
 
 </details>
