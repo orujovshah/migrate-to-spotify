@@ -148,6 +148,11 @@ class ConfigManager:
             if settings['embedding_model'] not in VALID_MODELS:
                 errors.append(f"Invalid embedding model. Must be one of: {', '.join(VALID_MODELS)}")
 
+        if 'matching_threshold' in settings:
+            threshold = settings['matching_threshold']
+            if not isinstance(threshold, (int, float)) or not 0.0 <= float(threshold) <= 1.0:
+                errors.append("Matching confidence threshold must be a number between 0.0 and 1.0")
+
         return (len(errors) == 0, errors)
 
     def get_settings(self) -> Optional[Dict]:
