@@ -101,13 +101,20 @@ class PlaylistTransfer:
         logger.info(f"✓ Found {len(videos)} videos")
         return playlist_info, videos
     
-    def match_tracks(self, videos: List[Dict], progress_callback=None, cancel_check=None) -> List[Tuple[Dict, Dict, str]]:
+    def match_tracks(
+        self,
+        videos: List[Dict],
+        progress_callback=None,
+        cancel_check=None,
+        match_threshold: float = 0.6
+    ) -> List[Tuple[Dict, Dict, str]]:
         """
         Match YouTube videos to Spotify tracks.
 
         Args:
             videos: List of YouTube video dictionaries
             progress_callback: Optional function(current, total, title) for progress updates
+            match_threshold: Minimum similarity score for accepting a match
 
         Returns:
             List of tuples (youtube_video, spotify_track, status)
@@ -136,12 +143,13 @@ class PlaylistTransfer:
             # Search on Spotify
             spotify_track = self.spotify.search_track_best_match(
                 queries=queries,
-                youtube_title=video_title
+                youtube_title=video_title,
+                match_threshold=match_threshold
             )
             
             if spotify_track:
                 # Verify match quality
-                if verify_match(video_title, spotify_track):
+                if verify_match(video_title, spotify_track, threshold=match_threshold):
                     matches.append((video, spotify_track, 'matched'))
                     logger.info(f"         ✓ Spotify: {format_track_info(spotify_track)}")
                 else:
@@ -230,7 +238,8 @@ class PlaylistTransfer:
         spotify_playlist_name: str = None,
         include_low_confidence: bool = True,
         max_videos: int = None,
-        create_public_playlists: bool = False
+        create_public_playlists: bool = False,
+        match_threshold: float = 0.6
     ) -> str:
         """
         Complete transfer from YouTube to Spotify.
@@ -241,6 +250,7 @@ class PlaylistTransfer:
             include_low_confidence: Include low confidence matches
             max_videos: Optional maximum number of videos to fetch
             create_public_playlists: Whether to create a public playlist
+            match_threshold: Minimum similarity score for accepting a match
             
         Returns:
             Spotify playlist URL
@@ -261,7 +271,7 @@ class PlaylistTransfer:
                 return None
             
             # Match tracks
-            matches = self.match_tracks(videos)
+            matches = self.match_tracks(videos, match_threshold=match_threshold)
             
             # Create Spotify playlist
             if spotify_playlist_name is None:
@@ -361,7 +371,8 @@ def main():
             spotify_playlist_name=spotify_name,
             include_low_confidence=include_low_confidence,
             max_videos=settings.get('max_videos'),
-            create_public_playlists=settings.get('create_public_playlists', False)
+            create_public_playlists=settings.get('create_public_playlists', False),
+            match_threshold=settings.get('matching_threshold', 0.6)
         )
         
         print(f"\n✓ Success! Your playlist is ready:")
