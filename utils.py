@@ -4,13 +4,14 @@ Includes title cleaning, parsing, and matching algorithms
 """
 
 import re
-from typing import Tuple, Optional, List
-from difflib import SequenceMatcher
-from sentence_transformers import SentenceTransformer, util
 import logging
+from difflib import SequenceMatcher
+from typing import Tuple, Optional, List, TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
 
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
 
 class EmbeddingMatcher:
     """
@@ -31,7 +32,7 @@ class EmbeddingMatcher:
         self._model_name = model_name
 
     @property
-    def model(self) -> Optional[SentenceTransformer]:
+    def model(self) -> Optional["SentenceTransformer"]:
         """Lazy load the model on first access"""
         if self._model is None:
             # Check if string-only mode
@@ -41,6 +42,8 @@ class EmbeddingMatcher:
                 return None
 
             try:
+                from sentence_transformers import SentenceTransformer
+
                 was_downloaded = self.is_model_downloaded(model_name)
 
                 if not was_downloaded:
@@ -249,6 +252,7 @@ def match_by_embeddings(
     )
 
     # Step 4: Cosine similarity
+    from sentence_transformers import util
     similarities = util.cos_sim(yt_embedding, sp_embeddings)[0]
 
     # Step 5: Best match + threshold
@@ -419,6 +423,7 @@ def verify_match(youtube_title: str, spotify_track: dict, threshold: float = 0.6
         return similarity_score(yt_clean, sp_text) >= threshold
 
     # Step 4: Cosine similarity + threshold
+    from sentence_transformers import util
     similarity = util.cos_sim(yt_embedding, sp_embedding).item()
     return float(similarity) >= threshold
 
