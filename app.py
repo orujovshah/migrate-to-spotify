@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 # Track per-session fetch cancellation signals.
 _FETCH_CANCEL_EVENTS: Dict[str, threading.Event] = {}
 _FETCH_CANCEL_LOCK = threading.Lock()
+_FETCH_RUN_IDS: Dict[str, int] = {}
 
 
 # Model size information
@@ -227,108 +228,226 @@ def _cancel_current_fetch(request: Optional[gr.Request]) -> None:
         if cancel_event:
             cancel_event.set()
 
-def _start_fetch_run(request: Optional[gr.Request]) -> threading.Event:
+def _start_fetch_run(request: Optional[gr.Request]) -> Tuple[threading.Event, int]:
     cancel_event = threading.Event()
     session_id = _get_session_id(request)
     if not session_id:
-        return cancel_event
+        return cancel_event, 0
     with _FETCH_CANCEL_LOCK:
         previous_event = _FETCH_CANCEL_EVENTS.get(session_id)
         if previous_event:
             previous_event.set()
         _FETCH_CANCEL_EVENTS[session_id] = cancel_event
-    return cancel_event
+        _FETCH_RUN_IDS[session_id] = _FETCH_RUN_IDS.get(session_id, 0) + 1
+        run_id = _FETCH_RUN_IDS[session_id]
+    return cancel_event, run_id
 
-def prepare_fetch(request: gr.Request = None) -> Tuple[str, List, dict, str, gr.update, gr.update, gr.update, gr.update]:
+def _is_latest_fetch_run(request: Optional[gr.Request], run_id: int) -> bool:
+    session_id = _get_session_id(request)
+    if not session_id:
+        return True
+    with _FETCH_CANCEL_LOCK:
+        return _FETCH_RUN_IDS.get(session_id, 0) == run_id
+
+INFO_PANEL_TEXT = """
+### ℹ️ Information
+
+**Requirements:**
+- YouTube API key
+- Spotify API credentials
+- Configure in **Settings** tab
+
+**Features:**
+- Semantic similarity matching
+- Track preview & selection
+- Playlist customization
+"""
+
+
+FETCH_STATE_INITIAL = "initial"
+FETCH_STATE_FETCHING = "fetching"
+FETCH_STATE_ERROR = "error"
+FETCH_STATE_SUCCESS = "success"
+
+
+_FETCH_KEEP = object()
+
+
+def _fetch_payload(
+    fetch_status=_FETCH_KEEP,
+    tracks_table=_FETCH_KEEP,
+    state_dict=_FETCH_KEEP,
+    fetch_stats=_FETCH_KEEP,
+    step2_placeholder=_FETCH_KEEP,
+    step2_content=_FETCH_KEEP,
+    custom_progress=_FETCH_KEEP,
+    fetch_state: str = "",
+) -> Tuple[
+    gr.update,
+    gr.update,
+    gr.update,
+    gr.update,
+    gr.update,
+    gr.update,
+    gr.update,
+    str,
+]:
+    def normalize(value):
+        return gr.update() if value is _FETCH_KEEP else value
+
+    return (
+        normalize(fetch_status),
+        normalize(tracks_table),
+        normalize(state_dict),
+        normalize(fetch_stats),
+        normalize(step2_placeholder),
+        normalize(step2_content),
+        normalize(custom_progress),
+        fetch_state,
+    )
+
+
+def _fetch_reset_payload(progress_text: str, fetch_state: str) -> Tuple[
+    gr.update,
+    gr.update,
+    gr.update,
+    gr.update,
+    gr.update,
+    gr.update,
+    gr.update,
+    str,
+]:
+    return _fetch_payload(
+        fetch_status="",
+        tracks_table=[],
+        state_dict={},
+        fetch_stats=INFO_PANEL_TEXT,
+        step2_placeholder=gr.update(visible=True),
+        step2_content=gr.update(visible=False),
+        custom_progress=gr.update(value=progress_text, visible=True),
+        fetch_state=fetch_state,
+    )
+
+
+def _fetch_error_payload(message: str) -> Tuple[
+    gr.update,
+    gr.update,
+    gr.update,
+    gr.update,
+    gr.update,
+    gr.update,
+    gr.update,
+    str,
+]:
+    return _fetch_reset_payload(message, FETCH_STATE_ERROR)
+
+
+def _fetch_button_update(state: str) -> gr.update:
+    if state == FETCH_STATE_FETCHING:
+        return gr.update(visible=True, value="⏳ Fetching... Click to restart", interactive=True)
+    if state == FETCH_STATE_ERROR:
+        return gr.update(visible=True, value="❌ Error Encountered... Click to Try Again", interactive=True)
+    if state == FETCH_STATE_SUCCESS:
+        return gr.update(visible=True, value="🔄 Fetch Again", interactive=True)
+    return gr.update(visible=True, value="🔍 Fetch Tracks", interactive=True)
+
+
+def prepare_fetch(
+    fetch_state: str,
+    request: gr.Request = None,
+) -> Tuple[str, List, dict, str, gr.update, gr.update, gr.update, str]:
     """
     Cancel any in-flight fetch and immediately reset the UI.
     Runs outside the queue so cancellation can happen immediately.
     """
     _cancel_current_fetch(request)
-    return (
-        "⏳ Fetching tracks...",
-        [],
-        {},
-        "",
-        gr.update(visible=True),
-        gr.update(visible=False),
-        gr.update(visible=True, value="⏳ Fetching... Click to restart", interactive=True),
-        gr.update(visible=False)
-    )
+    return _fetch_reset_payload("🔄 **Starting fetch...**", fetch_state)
 
 def fetch_tracks(
-        youtube_url: str,
-        include_low_confidence: bool,
-        progress=gr.Progress(),
-        request: gr.Request = None
-) -> Generator[Tuple[str, List, dict, str, gr.update, gr.update, gr.update, gr.update], None, None]:
+    youtube_url: str,
+    include_low_confidence: bool,
+    fetch_state: str,
+    progress=gr.Progress(),
+    request: gr.Request = None,
+) -> Generator[Tuple[str, List, dict, str, gr.update, gr.update, gr.update, str], None, None]:
     """
     Fetch and match tracks from YouTube playlist.
     includes progress bar and standard table structure.
     """
     try:
-        cancel_event = _start_fetch_run(request)
+        current_state = fetch_state or FETCH_STATE_INITIAL
+        cancel_event, run_id = _start_fetch_run(request)
 
         def is_cancelled() -> bool:
             return cancel_event.is_set()
+        def is_stale() -> bool:
+            return not _is_latest_fetch_run(request, run_id)
+
+        def cancelled_payload():
+            return _fetch_reset_payload("⏳ **Restarting fetch...**", current_state)
 
         # 1. Immediate Reset: Clear UI instantly on click
-        yield (
-            "⏳ Fetching tracks...",  # Show status
-            [],  # Clear table
-            {},  # Clear state
-            "",  # Clear stats
-            gr.update(visible=True),  # Show loading placeholder
-            gr.update(visible=False),  # Hide content
-            gr.update(visible=True, value="⏳ Fetching... Click to restart", interactive=True),  # Allow restart while running
-            gr.update(visible=False)
-        )
+        if is_stale():
+            return
+        yield _fetch_reset_payload("🔄 **Initializing...**", current_state)
 
         if is_cancelled():
+            if is_stale():
+                return
+            yield cancelled_payload()
             return
 
         # Validate input
         if not youtube_url or not youtube_url.strip():
-            yield (
-                "❌ Error: Please enter a YouTube playlist URL or ID",
-                [], {}, "", gr.update(visible=True), gr.update(visible=False),
-                gr.update(visible=True, value="🔍 Fetch Tracks", interactive=True),
-                gr.update(visible=False)
-            )
+            if is_stale():
+                return
+            yield _fetch_error_payload("❌ **Error:** Please enter a YouTube playlist URL or ID")
             return
 
         progress(0.1, desc="Initializing...")
 
         if is_cancelled():
+            if is_stale():
+                return
+            yield cancelled_payload()
             return
 
         # Load settings
         settings = _get_settings()
         if settings is None:
-            yield (
-                "❌ Error: API keys not configured. Please check Settings.",
-                [], {}, "", gr.update(visible=True), gr.update(visible=False),
-                gr.update(visible=True, value="🔍 Fetch Tracks", interactive=True),
-                gr.update(visible=False)
-            )
+            if is_stale():
+                return
+            yield _fetch_error_payload("❌ **Error:** API keys not configured. Please check Settings.")
             return
+        match_threshold = float(settings.get('matching_threshold', 0.6))
 
         if is_cancelled():
+            if is_stale():
+                return
+            yield cancelled_payload()
             return
 
         # Initialize transfer
         transfer, error = _initialize_transfer(settings)
         if error:
-            yield (
-                error, [], {}, "", gr.update(visible=True), gr.update(visible=False),
-                gr.update(visible=True, value="🔍 Fetch Tracks", interactive=True),
-                gr.update(visible=False)
-            )
+            if is_stale():
+                return
+            yield _fetch_error_payload(f"❌ **Error:** {error}")
             return
+
+        if is_stale():
+            return
+        yield _fetch_payload(
+            custom_progress=gr.update(value="⏳ **Fetching playlist...**", visible=True),
+            fetch_state=FETCH_STATE_FETCHING,
+        )
 
         progress(0.2, desc="Fetching YouTube playlist...")
 
         if is_cancelled():
+            if is_stale():
+                return
+            yield cancelled_payload()
             return
 
         # Get Playlist
@@ -339,47 +458,73 @@ def fetch_tracks(
                 max_videos=settings.get('max_videos')
             )
         except Exception as e:
-            yield (
-                f"❌ Error: Could not fetch YouTube playlist\n{str(e)}",
-                [], {}, "", gr.update(visible=True), gr.update(visible=False),
-                gr.update(visible=True, value="🔍 Fetch Tracks", interactive=True),
-                gr.update(visible=False)
-            )
+            if is_stale():
+                return
+            yield _fetch_error_payload(f"❌ **Error:** Could not fetch YouTube playlist - {str(e)}")
             return
 
         if is_cancelled():
+            if is_stale():
+                return
+            yield cancelled_payload()
             return
 
         if not videos:
-            yield (
-                "❌ Error: No videos found in playlist",
-                [], {}, "", gr.update(visible=True), gr.update(visible=False),
-                gr.update(visible=True, value="🔍 Fetch Tracks", interactive=True),
-                gr.update(visible=False)
-            )
+            if is_stale():
+                return
+            yield _fetch_error_payload("❌ **Error:** No videos found in playlist")
             return
 
         progress(0.4, desc=f"Found {len(videos)} videos. Starting matching...")
 
-        # Progress callback wrapper
-        def update_matching_progress(current, total, title):
-            if is_cancelled():
-                return
-            # Map matching progress (0% to 100%) to overall bar (40% to 90%)
-            base = 0.4
-            scale = 0.5
-            overall = base + ((current / total) * scale)
-            short_title = title[:40] + "..." if len(title) > 40 else title
-            progress(overall, desc=f"Matching {current}/{total}: {short_title}")
+        # Match tracks manually with per-track progress updates
+        from utils import build_search_queries, verify_match
 
-        # Match tracks
-        matches = transfer.match_tracks(
-            videos,
-            progress_callback=update_matching_progress,
-            cancel_check=is_cancelled
-        )
+        matches = []
+        total_videos = len(videos)
+
+        for i, video in enumerate(videos, 1):
+            if is_cancelled():
+                if is_stale():
+                    return
+                yield cancelled_payload()
+                return
+
+            video_title = video['title']
+            short_title = video_title[:50] + "..." if len(video_title) > 50 else video_title
+
+            # Update custom progress for THIS track
+            percentage = int((i / total_videos) * 100)
+            if is_stale():
+                return
+            yield _fetch_reset_payload(
+                f"🎵 **Matching Track {i}/{total_videos}** ({percentage}%) - {short_title}",
+                FETCH_STATE_FETCHING,
+            )
+
+            # Build search queries
+            queries = build_search_queries(video_title)
+
+            # Search on Spotify
+            spotify_track = transfer.spotify.search_track_best_match(
+                queries=queries,
+                youtube_title=video_title,
+                match_threshold=match_threshold
+            )
+
+            if spotify_track:
+                # Verify match quality
+                if verify_match(video_title, spotify_track, threshold=match_threshold):
+                    matches.append((video, spotify_track, 'matched'))
+                else:
+                    matches.append((video, spotify_track, 'low_confidence'))
+            else:
+                matches.append((video, None, 'not_found'))
 
         if is_cancelled():
+            if is_stale():
+                return
+            yield cancelled_payload()
             return
 
         progress(0.95, desc="Finalizing matches...")
@@ -430,6 +575,10 @@ def fetch_tracks(
         missing = sum(1 for m in matches if m[2] == 'not_found')
 
         stats_text = f"""
+## ✅ Success!
+**Playlist:** {playlist_info['title']}
+**Matched:** {len(tracks_data)} tracks
+
 ### Fetched Tracks
 - **Total:** {total}
 - **High Confidence:** {high}
@@ -437,33 +586,28 @@ def fetch_tracks(
 - **Not Found:** {missing}
 """
 
-        status_msg = f"""
-## ✅ Success!
-**Playlist:** {playlist_info['title']}
-**Matched:** {len(tracks_data)} tracks
-"""
+        status_msg = ""
 
         progress(1.0, desc="Done!")
 
         # Final Yield
-        yield (
-            status_msg,
-            tracks_data,
-            state_data,
-            stats_text,
-            gr.update(visible=False),  # Hide placeholder
-            gr.update(visible=True),  # Show content
-            gr.update(visible=False),
-            gr.update(visible=True, value="🔄 Fetch Again", interactive=True)  # Show fetch again after display
+        if is_stale():
+            return
+        yield _fetch_payload(
+            fetch_status=status_msg,
+            tracks_table=tracks_data,
+            state_dict=state_data,
+            fetch_stats=stats_text,
+            step2_placeholder=gr.update(visible=False),
+            step2_content=gr.update(visible=True),
+            custom_progress=gr.update(value="✅ **Matching complete!**", visible=True),
+            fetch_state=FETCH_STATE_SUCCESS,
         )
 
     except Exception as e:
-        yield (
-            f"❌ Unexpected Error: {str(e)}",
-            [], {}, "", gr.update(visible=True), gr.update(visible=False),
-            gr.update(visible=True, value="🔍 Fetch Tracks", interactive=True),
-            gr.update(visible=False)
-        )
+        if _is_latest_fetch_run(request, run_id):
+            yield _fetch_error_payload(f"❌ **Unexpected Error:** {str(e)}")
+        return
 
 def rgb_to_hex(rgb):
     """Convert (R, G, B) tuple to hex string."""
@@ -988,9 +1132,11 @@ def load_current_settings() -> Dict:
     if config_mgr.settings_exist():
         try:
             settings = config_mgr.load_settings()
-            # Ensure embedding_model has a default value
+            # Ensure defaults for new settings
             if 'embedding_model' not in settings:
                 settings['embedding_model'] = 'all-mpnet-base-v2'
+            if 'matching_threshold' not in settings:
+                settings['matching_threshold'] = 0.6
             return settings
         except Exception:
             pass
@@ -1004,7 +1150,8 @@ def load_current_settings() -> Dict:
         'spotify_scope': 'playlist-modify-public playlist-modify-private ugc-image-upload',
         'create_public_playlists': False,
         'max_videos': None,
-        'embedding_model': 'all-mpnet-base-v2'
+        'embedding_model': 'all-mpnet-base-v2',
+        'matching_threshold': 0.6
     }
 
 
@@ -1025,7 +1172,8 @@ def populate_settings_ui():
         settings.get('spotify_scope', 'playlist-modify-public playlist-modify-private ugc-image-upload'),
         settings.get('create_public_playlists', False),
         settings.get('max_videos'),
-        settings.get('embedding_model', 'all-mpnet-base-v2')
+        settings.get('embedding_model', 'all-mpnet-base-v2'),
+        settings.get('matching_threshold', 0.6)
     )
 
 
@@ -1373,7 +1521,8 @@ def save_settings_handler(
     spotify_scope: str,
     create_public_playlists: bool,
     max_videos: Optional[float],
-    embedding_model: str
+    embedding_model: str,
+    matching_threshold: float
 ) -> str:
     """
     Save settings and return status message
@@ -1387,6 +1536,7 @@ def save_settings_handler(
         create_public_playlists: Whether to create public playlists by default
         max_videos: Maximum videos to process (None for unlimited)
         embedding_model: Semantic matching model to use
+        matching_threshold: Minimum similarity score for accepting a match
 
     Returns:
         Status message (success or error)
@@ -1395,6 +1545,9 @@ def save_settings_handler(
     from datetime import datetime
 
     config_mgr = ConfigManager()
+    previous_settings = config_mgr.get_settings() or {}
+    previous_threshold = previous_settings.get('matching_threshold', 0.6)
+    new_threshold = float(matching_threshold) if matching_threshold is not None else 0.6
 
     # Build settings dictionary
     settings = {
@@ -1406,6 +1559,7 @@ def save_settings_handler(
         'create_public_playlists': create_public_playlists,
         'max_videos': int(max_videos) if max_videos and max_videos > 0 else None,
         'embedding_model': embedding_model,
+        'matching_threshold': new_threshold,
         'last_updated': datetime.now().isoformat()
     }
 
@@ -1419,6 +1573,12 @@ def save_settings_handler(
     # Save
     success = config_mgr.save_settings(settings)
     if success:
+        if abs(new_threshold - float(previous_threshold)) > 1e-6:
+            logger.info(
+                "Matching confidence threshold changed from %.2f to %.2f",
+                float(previous_threshold),
+                new_threshold
+            )
         return """
 ### ✅ Settings Saved Successfully!
 
@@ -1474,6 +1634,42 @@ def create_ui():
         margin: 20px 0;
     }
 
+    /* Style custom progress display to make it highly visible */
+    #custom-progress {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+        color: white !important;
+        padding: 12px 20px !important;
+        border-radius: 8px !important;
+        font-size: 15px !important;
+        font-weight: 600 !important;
+        box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4) !important;
+        margin: 0 0 !important;
+        text-align: center !important;
+    }
+
+    /* Force all text inside custom progress to be bright white */
+    #custom-progress *,
+    #custom-progress p,
+    #custom-progress strong,
+    #custom-progress em,
+    #custom-progress .markdown {
+        color: white !important;
+        opacity: 1 !important;
+    }
+
+    /* Hide ALL Gradio progress elements everywhere, but NOT our custom content */
+    .progress-container,
+    .progress-level-inner,
+    .progress-bar-wrap,
+    div[class*="Progress"]:not(#custom-progress) {
+        display: none !important;
+    }
+
+    /* Only hide Gradio's auto-generated progress bars, not our Markdown content */
+    .gradio-container .progress-bar:not(#custom-progress) {
+        display: none !important;
+    }
+
     /* Remove white glow from all input fields */
     input[type="password"],
     input[type="text"],
@@ -1496,11 +1692,22 @@ def create_ui():
         display: none;
     }
 
-    /* Make Confidence column completely non-interactive */
+    /* Fix first column (checkbox) width to prevent it from expanding */
+    #tracks-table table th:nth-child(1),
+    #tracks-table table td:nth-child(1) {
+        width: 80px !important;
+        min-width: 80px !important;
+        max-width: 80px !important;
+    }
+
+    /* Make Confidence column completely non-interactive and fixed width */
     #tracks-table table th:nth-child(4),
     #tracks-table table td:nth-child(4) {
         pointer-events: none;
         user-select: none;
+        width: 120px !important;
+        min-width: 120px !important;
+        max-width: 120px !important;
     }
     """
 
@@ -1545,6 +1752,7 @@ def create_ui():
 
         # State to store matched tracks between steps
         state = gr.State({})
+        fetch_state = gr.State(FETCH_STATE_INITIAL)
 
         # Settings Section
         gr.Markdown("## ⚙️ Settings & Configuration")
@@ -1581,6 +1789,13 @@ Settings are saved locally and will be used for all future transfers.
 5. Copy the API key and paste it above
                     """)
 
+                    gr.Markdown("#### Advanced Settings")
+                    spotify_redirect_uri_input = gr.Textbox(
+                        label="Spotify Redirect URI",
+                        placeholder="http://127.0.0.1:8080/callback",
+                        info="Must match what you set in Spotify app settings"
+                    )
+
                 with gr.Column():
                     gr.Markdown("#### Spotify API")
                     spotify_client_id_input = gr.Textbox(
@@ -1604,27 +1819,25 @@ Settings are saved locally and will be used for all future transfers.
 6. In app settings, add this Redirect URI: `http://127.0.0.1:8080/callback`
                     """)
 
+            spotify_scope_input = gr.Textbox(
+                label="Spotify API Scopes",
+                placeholder="playlist-modify-public playlist-modify-private ugc-image-upload",
+                info="OAuth permissions (keep default unless you know what you're doing)"
+            )
+
+            save_settings_btn = gr.Button("💾 Save API Configuration", variant="primary", size="lg")
+            settings_status = gr.Markdown()
+
+        with gr.Accordion("Semantic Matching Model Settings and Status", open=False):
+            gr.Markdown("#### Playlist and Model Settings")
             with gr.Row():
                 with gr.Column():
-                    gr.Markdown("#### Advanced Settings")
-                    spotify_redirect_uri_input = gr.Textbox(
-                        label="Spotify Redirect URI",
-                        placeholder="http://127.0.0.1:8080/callback",
-                        info="Must match what you set in Spotify app settings"
-                    )
-                    spotify_scope_input = gr.Textbox(
-                        label="Spotify API Scopes",
-                        placeholder="playlist-modify-public playlist-modify-private ugc-image-upload",
-                        info="OAuth permissions (keep default unless you know what you're doing)"
-                    )
-
-                with gr.Column():
-                    gr.Markdown("#### Playlist Options")
                     create_public_input = gr.Checkbox(
                         label="Create Public Playlists by Default",
                         value=False,
                         info="Uncheck for private playlists"
                     )
+                with gr.Column():
                     max_videos_input = gr.Number(
                         label="Maximum Videos to Process",
                         value=None,
@@ -1632,6 +1845,8 @@ Settings are saved locally and will be used for all future transfers.
                         info="Leave empty for unlimited"
                     )
 
+            with gr.Row():
+                with gr.Column():
                     embedding_model_input = gr.Dropdown(
                         choices=[
                             ("String matching only (0MB, fastest, basic accuracy)", "string_only"),
@@ -1644,12 +1859,17 @@ Settings are saved locally and will be used for all future transfers.
                         label="🧠 Semantic Matching Model",
                         info="⚠️ Restart app after changing. Smaller models = faster but less accurate matching."
                     )
+                with gr.Column():
+                    matching_threshold_input = gr.Slider(
+                        minimum=0.0,
+                        maximum=1.0,
+                        value=0.6,
+                        step=0.01,
+                        label="Matching confidence threshold",
+                        info="Higher = stricter matching, fewer results; lower = more aggressive matching."
+                    )
 
-            save_settings_btn = gr.Button("💾 Save Settings", variant="primary", size="lg")
-            settings_status = gr.Markdown()
-
-        # Model Status Section
-        with gr.Accordion("🤖 Semantic Matching Model Status", open=False):
+            gr.Markdown("#### Semantic Matching Model Status")
             model_info_display = gr.Markdown(get_model_info_markdown())
 
             with gr.Row():
@@ -1658,6 +1878,8 @@ Settings are saved locally and will be used for all future transfers.
                 delete_model_btn = gr.Button("🗑️ Delete Selected Model", size="sm", variant="stop")
 
             model_status_display = gr.Markdown("**Status:** Click button to check")
+
+            save_model_settings_btn = gr.Button("💾 Save Settings", variant="primary", size="lg")
 
         gr.Markdown("---")
 
@@ -1668,8 +1890,8 @@ Settings are saved locally and will be used for all future transfers.
             with gr.Column(scale=2):
                 youtube_input = gr.Textbox(
                     label="YouTube Playlist URL or ID",
-                    placeholder="https://www.youtube.com/playlist?list=PLxxxxxx or PLxxxxxx",
-                    lines=1,
+                    placeholder="By URL: https://www.youtube.com/playlist?list=PLxxxxxx\nBy ID: PLxxxxxx",
+                    lines=2,
                     info="Paste the full URL or just the playlist ID"
                 )
 
@@ -1685,35 +1907,19 @@ Settings are saved locally and will be used for all future transfers.
                     size="lg"
                 )
 
-                fetch_again_btn = gr.Button(
-                    "🔄 Fetch Again",
-                    variant="secondary",
-                    size="lg",
-                    visible=False
-                )
-
             with gr.Column(scale=1):
-                gr.Markdown(
-                    """
-                    ### ℹ️ Information
-
-                    **Requirements:**
-                    - YouTube API key
-                    - Spotify API credentials
-                    - Configure in **Settings** tab
-
-                    **Features:**
-                    - Semantic similarity matching
-                    - Track preview & selection
-                    - Playlist customization
-                    """
-                )
+                fetch_stats = gr.Markdown(value=INFO_PANEL_TEXT)
 
         fetch_status = gr.Markdown(
             value="Ready to fetch tracks. Enter a YouTube playlist URL above."
         )
 
-        fetch_stats = gr.Markdown()
+        # Custom progress display - shows detailed progress during fetching
+        custom_progress = gr.Markdown(
+            value="",
+            visible=False,
+            elem_id="custom-progress"
+        )
 
         gr.Markdown("---")
 
@@ -1843,32 +2049,42 @@ Once processing is complete, this section will show:
         # Connect the fetch button
         prepare_event = fetch_btn.click(
             fn=prepare_fetch,
-            inputs=[],
-            outputs=[fetch_status, tracks_table, state, fetch_stats, step2_placeholder, step2_content, fetch_btn, fetch_again_btn],
+            inputs=[fetch_state],
+            outputs=[
+                fetch_status,
+                tracks_table,
+                state,
+                fetch_stats,
+                step2_placeholder,
+                step2_content,
+                custom_progress,
+                fetch_state,
+            ],
             queue=False,
         )
 
         prepare_event.then(
             fn=fetch_tracks,
-            inputs=[youtube_input, include_low_conf],
-            outputs=[fetch_status, tracks_table, state, fetch_stats, step2_placeholder, step2_content, fetch_btn, fetch_again_btn],
-            show_progress="full",
+            inputs=[youtube_input, include_low_conf, fetch_state],
+            outputs=[
+                fetch_status,
+                tracks_table,
+                state,
+                fetch_stats,
+                step2_placeholder,
+                step2_content,
+                custom_progress,
+                fetch_state,
+            ],
+            show_progress=False,
             trigger_mode="always_last",
         )
 
-        prepare_again_event = fetch_again_btn.click(
-            fn=prepare_fetch,
-            inputs=[],
-            outputs=[fetch_status, tracks_table, state, fetch_stats, step2_placeholder, step2_content, fetch_btn, fetch_again_btn],
-            queue=False,
-        )
-
-        prepare_again_event.then(
-            fn=fetch_tracks,
-            inputs=[youtube_input, include_low_conf],
-            outputs=[fetch_status, tracks_table, state, fetch_stats, step2_placeholder, step2_content, fetch_btn, fetch_again_btn],
-            show_progress="full",
-            trigger_mode="always_last",
+        fetch_state.change(
+            fn=_fetch_button_update,
+            inputs=[fetch_state],
+            outputs=[fetch_btn],
+            show_progress=False,
         )
 
         # Connect track table cell clicks to show modals
@@ -1904,7 +2120,24 @@ Once processing is complete, this section will show:
                 spotify_scope_input,
                 create_public_input,
                 max_videos_input,
-                embedding_model_input
+                embedding_model_input,
+                matching_threshold_input
+            ],
+            outputs=[settings_status]
+        )
+
+        save_model_settings_btn.click(
+            fn=save_settings_handler,
+            inputs=[
+                youtube_api_key_input,
+                spotify_client_id_input,
+                spotify_client_secret_input,
+                spotify_redirect_uri_input,
+                spotify_scope_input,
+                create_public_input,
+                max_videos_input,
+                embedding_model_input,
+                matching_threshold_input
             ],
             outputs=[settings_status]
         )
@@ -1988,7 +2221,8 @@ Once processing is complete, this section will show:
                 spotify_scope_input,
                 create_public_input,
                 max_videos_input,
-                embedding_model_input
+                embedding_model_input,
+                matching_threshold_input
             ]
         )
 
